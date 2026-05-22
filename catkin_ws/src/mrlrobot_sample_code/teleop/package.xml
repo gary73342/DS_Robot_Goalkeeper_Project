@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>teleop</name>
+  <version>0.0.0</version>
+  
+  <description>
+    Provides teleoperation using keyboard for MRL's robots.
+    And this package is edit by turtlebot3 original code.
+    Following has url.
+  </description>
+  
+  <license>MRL-25-02-11</license>
+  <maintainer email="willy101560@gmail.com">Yu-Chen</maintainer>
+  <url type="reference">https://github.com/ROBOTIS-GIT/turtlebot3</url>
+  
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>rospy</depend>
+  <depend>geometry_msgs</depend>
+
+</package>

@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<robot name="minibot">
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0.075" rpy="0 0 0"/> 
+      <geometry>
+        <cylinder radius="0.10" length="0.15"/> 
+      </geometry>
+      <material name="blue">
+        <color rgba="0.0 0.0 0.8 1.0"/> </material>
+    </visual>
+  </link>
+
+  <link name="base_scan">
+    <visual>
+      <origin xyz="0 0 0.02" rpy="0 0 0"/> 
+      <geometry>
+        <cylinder radius="0.0325" length="0.04"/> 
+      </geometry>
+      <material name="black">
+        <color rgba="0.1 0.1 0.1 1.0"/> </material>
+    </visual>
+  </link>
+
+  <joint name="base_to_laser" type="fixed">
+    <parent link="base_link"/>
+    <child link="base_scan"/>
+    <origin xyz="0.0675 0.0 0.15" rpy="0 0 0"/>
+  </joint>
+
+</robot>
+

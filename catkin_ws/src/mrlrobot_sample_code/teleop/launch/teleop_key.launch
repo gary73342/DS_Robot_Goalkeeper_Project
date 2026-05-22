@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<launch>
+
+  <arg name="model" default="$(env ROBOT_MODEL)" doc="model type [turtlebot3, minibot]"/>
+  <param name="model" value="$(arg model)"/>
+
+
+  <node pkg="teleop" type="teleop_key.py" name="teleop_key"  output="screen">
+  </node>
+  
+</launch>

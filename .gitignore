@@ -1,0 +1,35 @@
+# ROS 編譯產物
+catkin_ws/build/
+catkin_ws/devel/
+catkin_ws/logs/
+
+# ROS 軟連結 (自動產生)
+catkin_ws/src/CMakeLists.txt
+
+# 大型資料檔案
+Robot_Goalkeeper.v1i.yolov8/
+data/laser_data/
+data/camera_data/
+data/images_dataset/
+*.bag
+*.mat
+*.dat
+
+# 模型權重檔
+*.pt
+runs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# MATLAB/Octave
+*.asv
+
+# 系統檔案
+.DS_Store
+Thumbs.db
+
+# 虛擬環境
+.venv/

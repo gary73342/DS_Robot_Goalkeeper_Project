@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>sample_code</name>
+  <version>0.0.0</version>
+  
+  <description>
+    This package is designed for the MRL robot sample code to collect laser scan data. It is compatible with both TurtleBot3 and MiniBot. This package should be executed on host systems.
+  </description>
+  
+  <license>MRL-25-02-11</license>
+  <maintainer email="willy101560@gmail.com">Yu-Chen</maintainer>
+  
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>roscpp</depend>
+  <depend>rospy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>roslib</depend>
+  <depend>tf</depend>
+  <depend>nav_msgs</depend>
+  <depend>visualization_msgs</depend>
+</package>
