@@ -24,7 +24,7 @@ include_directories(
 
 # 3. 將所有 .cpp 檔案編譯成一個名為 football_robot_fsm 的執行檔
 add_executable(robot_goalkeeper_fsm
-  src/main.cpp
+  src/perception.cpp
   src/RandomForest.cpp
   src/Localization.cpp
   src/FeatureExtractor.cpp

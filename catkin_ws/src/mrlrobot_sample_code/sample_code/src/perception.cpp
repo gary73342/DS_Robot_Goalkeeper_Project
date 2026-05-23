@@ -9,6 +9,7 @@
 #include <visualization_msgs/Marker.h>
 #include <tf/transform_broadcaster.h>
 #include <nav_msgs/Odometry.h>
+#include <std_msgs/Float32MultiArray.h>  // 新增：給 ball_lidar_world 和 robot_pose 用
 
 #include "RandomForest.h"
 #include "Localization.h"
@@ -44,6 +45,12 @@ int main(int argc, char** argv) {
     ros::Publisher cmd_vel_pub = nh.advertise<geometry_msgs::Twist>("/cmd_vel", 1);
     ros::Publisher marker_pub = nh.advertise<visualization_msgs::Marker>("/visual_markers", 10);
     ros::Subscriber odom_sub = nh.subscribe<nav_msgs::Odometry>("/odom", 1, odomCallback);
+
+    // 新增：給 fusion_node.py 用的兩個 Publisher
+    // /ball_lidar_world : [detected(0/1), X_world, Y_world]  球的全域座標
+    // /robot_pose       : [x, y, theta]                      機器人當前全域姿態
+    ros::Publisher ball_lidar_pub  = nh.advertise<std_msgs::Float32MultiArray>("/ball_lidar_world", 1);
+    ros::Publisher robot_pose_pub  = nh.advertise<std_msgs::Float32MultiArray>("/robot_pose", 1);
     
     // 2. 初始化核心模組
     std::string model_path = ros::package::getPath("sample_code") + "/rf_model_multi_7feat.txt";
@@ -123,6 +130,27 @@ int main(int argc, char** argv) {
             
         ROS_INFO_THROTTLE(0.5, "[Localization] Global: X=%.2f, Y=%.2f, Theta=%.2f rad", ex, ey, et);
 
+        // 發布機器人全域姿態給 fusion_node.py
+        {
+            std_msgs::Float32MultiArray pose_msg;
+            pose_msg.data = {ex, ey, et};
+            robot_pose_pub.publish(pose_msg);
+        }
+
+        // 發布球的全域座標給 fusion_node.py
+        // 局部座標 (ball_obs.x, ball_obs.y) 透過機器人姿態轉換到全域座標
+        {
+            std_msgs::Float32MultiArray ball_msg;
+            if (ball_detected) {
+                float ball_global_x = ex + ball_obs.x * cos(et) - ball_obs.y * sin(et);
+                float ball_global_y = ey + ball_obs.x * sin(et) + ball_obs.y * cos(et);
+                ball_msg.data = {1.0f, ball_global_x, ball_global_y};
+            } else {
+                ball_msg.data = {0.0f, 0.0f, 0.0f};
+            }
+            ball_lidar_pub.publish(ball_msg);
+        }
+
         for (size_t i = 0; i < found_posts.size(); ++i) {
             ROS_INFO_THROTTLE(0.5, "[Perception] Post %zu found! Rel: x=%.2f, y=%.2f (Dist: %.2f)", 
                                 i+1, found_posts[i].x, found_posts[i].y, 
@@ -194,7 +222,7 @@ int main(int argc, char** argv) {
         float target_yaw = 0.0f;   // 守門員車頭永遠面向正前方，不准轉彎！
 
         if (ball_detected) {
-            current_state = PATROL;
+            current_state = INTERCEPT;
         } else {
             current_state = PATROL;
         }
@@ -398,7 +426,8 @@ int main(int argc, char** argv) {
             marker_pub.publish(post_marker);
         }
 
-        cmd_vel_pub.publish(cmd_msg); 
+        // cmd_vel 已交由 fusion_node.py 統一發布，這裡不再發送
+        // cmd_vel_pub.publish(cmd_msg);  ← 移除
         
 
     // ★ 動態休眠：精準扣除你上面計算特徵、跑 RF、跑 PF 花掉的時間
