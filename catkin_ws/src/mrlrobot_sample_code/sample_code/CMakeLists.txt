@@ -22,15 +22,23 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
 )
 
-# 3. 將所有 .cpp 檔案編譯成一個名為 football_robot_fsm 的執行檔
-add_executable(robot_goalkeeper_fsm
-  src/perception.cpp
-  src/RandomForest.cpp
-  src/Localization.cpp
+# 3a. perception_node：感知 + RViz
+#     需要：隨機森林、特徵提取
+add_executable(perception_node
+  src/Perception_node.cpp
+  src/Random_Forest.cpp
   src/FeatureExtractor.cpp
 )
+target_link_libraries(perception_node
+  ${catkin_LIBRARIES}
+)
 
-# 4. 將 ROS 函式庫連結到你的執行檔上
-target_link_libraries(robot_goalkeeper_fsm
+# 3b. localization_node：定位 + TF 廣播
+#     需要：粒子濾波
+add_executable(localization_node
+  src/Localization_node.cpp
+  src/Particle_Filter.cpp
+)
+target_link_libraries(localization_node
   ${catkin_LIBRARIES}
 )

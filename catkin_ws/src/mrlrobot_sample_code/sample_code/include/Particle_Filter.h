@@ -4,11 +4,7 @@
 #include <vector>
 #include <random>
 
-// 局部座標結構 (光達觀測到的物體座標)
-struct Observation {
-    float x; // 向前 (m)
-    float y; // 向左 (m)
-};
+#include <FeatureExtractor.h>
 
 // 粒子結構
 struct Particle {

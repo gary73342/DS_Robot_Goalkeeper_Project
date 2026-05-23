@@ -61,9 +61,8 @@ CONF_THRESHOLD = 0.4
 
 class RosTopicCapture:
     """
-    把 ROS topic 包裝成類似 cv2.VideoCapture 的介面。
-    HomographyCalibrator 只需要 cap.read()，這裡實作它。
-    不需要 cap.release()（沒有硬體資源要釋放）。
+    HomographyCalibrator 可以從 ROS topic 拿畫面
+    每次呼叫 cap.read() 就去訂閱一次 /camera/color/image_raw 拿一幀，校準視窗就能持續顯示即時畫面。
     """
     def __init__(self, node):
         self._node = node   # YoloRosNode，用來呼叫 _grab_frame_from_topic

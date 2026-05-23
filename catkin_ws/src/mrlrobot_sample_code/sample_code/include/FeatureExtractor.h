@@ -4,6 +4,13 @@
 #include <vector>
 #include <sensor_msgs/LaserScan.h>
 
+// 局部座標結構 (光達觀測到的物體座標)
+struct Observation {
+    float x; // 向前 (m)
+    float y; // 向左 (m)
+};
+
+
 // 單一雷射點結構
 struct Point2D {
     float x;
