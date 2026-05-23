@@ -26,10 +26,9 @@ from std_msgs.msg import Float32MultiArray
 # ==============================================================================
 
 # --- 球場幾何 ---
-FIELD_X_MIN     = -0.5   # 球場 X 軸左邊界（公尺）
-FIELD_X_MAX     =  0.5   # 球場 X 軸右邊界（公尺）
-DEFENSE_LINE_Y  =  0.0   # 防守線 Y 值：機器人固定在 Y=0，球從 Y 正方向來
-                          # 攔截時預測球到達 Y=0 時的 X 位置
+FIELD_X_MIN    = -0.45
+FIELD_X_MAX    =  0.45
+DEFENSE_LINE_Y =  0.5   # 機器人守在離底線 0.5m 處
 
 # --- EKF 雜訊參數 ---
 # 過程雜訊（Q）：數字越大代表你越不相信物理模型，EKF 反應越靈敏但越抖
@@ -52,15 +51,14 @@ MAX_SPEED       = 0.22   # 最大線速度（m/s）
 MIN_SPEED       = 0.08   # 最小啟動速度（m/s）
 STOP_THRESHOLD  = 0.02   # 死區：誤差小於此值停止（m）
 
-# 系統延遲補償（從發出指令到馬達開始動的延遲，單位秒）
-SYSTEM_DELAY    = 0.08
-
 # LOST 狀態：連續幾秒沒有有效觀測就停止攔截
 LOST_TIMEOUT    = 0.5    # 秒
 
+# 系統延遲補償（從發出指令到馬達開始動的延遲，單位秒）
+# SYSTEM_DELAY    = 0.08
 # --- 來球判斷 ---
 # 球的 Y 方向速度小於此值（負數，朝機器人）才觸發攔截
-BALL_INCOMING_VY = -0.1  # m/s
+# BALL_INCOMING_VY = -0.1  # m/s
 
 # ==============================================================================
 # Asynchronous EKF
@@ -104,11 +102,10 @@ class AsyncEKF:
         self.x = F @ self.x
         self.P = F @ self.P @ F.T + Q
 
-    def _mahalanobis(self, z):
-        """計算觀測值與預測值的 Mahalanobis 距離，用於 gate 過濾"""
+    def _mahalanobis(self, z, R):             # ← 加入 R 參數
         z = np.array(z).reshape(2, 1)
         innov = z - self.H @ self.x
-        S = self.H @ self.P @ self.H.T
+        S = self.H @ self.P @ self.H.T + R   # ← 加上 R
         try:
             d2 = float(innov.T @ np.linalg.inv(S) @ innov)
         except np.linalg.LinAlgError:
@@ -135,7 +132,7 @@ class AsyncEKF:
             return True
 
         # Mahalanobis gate：拒絕離預測點太遠的雜訊觀測
-        d2 = self._mahalanobis(z)
+        d2 = self._mahalanobis(z, R)
         if d2 > MAHAL_GATE:
             rospy.logdebug("[EKF] 觀測被 gate 拒絕，Mahal dist²=%.2f", d2)
             return False
@@ -172,6 +169,7 @@ def compute_R_camera(ball_world_x, ball_world_y, robot_x, robot_y, conf):
     球到相機的距離用球到機器人的距離近似（相機架在球場邊，跟機器人距離固定）
     """
     d = math.hypot(ball_world_x - robot_x, ball_world_y - robot_y)
+    # d = ball_world_y
     d_ref = 1.5   # 參考距離（公尺）
     conf = max(conf, 0.01)   # 防止除以零
 
@@ -344,7 +342,7 @@ class FusionNode:
     # ------------------------------------------------------------------
     # 攔截決策 + P-Control
     # ------------------------------------------------------------------
-
+    '''
     def _publish_control(self):
         """
         從 EKF 後驗狀態預測攔截點，計算 P-Control 速度，發布 /cmd_vel。
@@ -369,7 +367,7 @@ class FusionNode:
                 t_intercept = (DEFENSE_LINE_Y - by) / vy
 
             t_intercept = max(t_intercept, 0.0)
-
+            t_intercept = min(t_intercept, 2.0)
             # 攔截點 X + 延遲補償
             target_x = bx + vx * (t_intercept + SYSTEM_DELAY)
             mode_str = "INTERCEPT"
@@ -399,6 +397,32 @@ class FusionNode:
             "目標X=%.2f 機器人X=%.2f | 速度=%+.2f",
             mode_str, bx, by, vx, vy,
             target_x, self.robot_x, speed)
+    '''
+    def _publish_control(self):
+        state = self.ekf.get_state()
+        bx, by, vx, vy = state
+
+        target_x = np.clip(bx, FIELD_X_MIN, FIELD_X_MAX)
+        error = target_x - self.robot_x
+
+        if abs(error) < STOP_THRESHOLD:
+            speed = 0.0
+        else:
+            speed = KP_LINEAR * error
+            if abs(speed) < MIN_SPEED:
+                speed = math.copysign(MIN_SPEED, speed)
+            speed = np.clip(speed, -MAX_SPEED, MAX_SPEED)
+
+        cmd = Twist()
+        cmd.linear.x = speed
+        cmd.angular.z = 0.0
+        self.pub_vel.publish(cmd)
+
+        rospy.loginfo_throttle(0.2,
+            "[TRACK] 球(%+.2f, %.2f) v=(%+.2f, %+.2f) | "
+            "機器人X=%+.2f 誤差=%+.2f | 速度=%+.2f",
+            bx, by, vx, vy, self.robot_x, error, speed)
+
 
     def _stop_robot(self):
         cmd = Twist()
@@ -432,10 +456,10 @@ class FusionNode:
         cmd.linear.x = speed
         self.pub_vel.publish(cmd)
 
+        side = "右側(+%.2f)" % FIELD_X_MAX if self.patrol_target_x > 0 else "左側(%.2f)" % FIELD_X_MIN
         rospy.loginfo_throttle(0.5,
-            "[Fusion] PATROL | 目標X=%.2f 機器人X=%.2f | 速度=%+.2f",
-            self.patrol_target_x, self.robot_x, speed)
-
+            "[PATROL] 前往%s | 機器人X=%+.2f 誤差=%+.2f | 速度=%+.2f",
+            side, self.robot_x, error, speed)
     # ------------------------------------------------------------------
     # 啟動
     # ------------------------------------------------------------------

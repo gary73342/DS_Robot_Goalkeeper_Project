@@ -8,7 +8,8 @@ using namespace std;
 // 建構子實作
 Localizer::Localizer(int n) : num_particles(n) {
     // 1. 假設球門在Y軸正向， 寬度 1 m
-    map_landmarks = {{0.5f, -0.3f}, {-0.5f, -0.3f}};
+    map_landmarks = {{0.45f, 0.0f}, {-0.45f, 0.0f}};
+
 
     // 2. 系統雜訊參數 (強烈建議依據實車情況調校)
     noise_v = 0.04f;   // 速度雜訊 (m/s)
@@ -18,9 +19,10 @@ Localizer::Localizer(int n) : num_particles(n) {
     // 3. 均勻散佈初始化
     random_device rd;
     gen.seed(rd());
-    uniform_real_distribution<float> dist_x(-0.5f, 0.5f);   // X 軸總範圍 1.0m (-0.5 到 +0.5)    
-    uniform_real_distribution<float> dist_y(-0.2f, 0.2f); // Y 軸總範圍 0.5m (-0.25 到 +0.25)    
-    uniform_real_distribution<float> dist_theta(-0.2f, 0.2f);// 角度範圍，擺放時先朝X軸正向，可較快定位
+    // 粒子初始化：機器人在 Y=0.5 附近，X 在 ±0.45 之間
+    uniform_real_distribution<float> dist_x(-0.45f, 0.45f);
+    uniform_real_distribution<float> dist_y(0.3f, 0.7f);    // 0.5m ± 0.2m
+    uniform_real_distribution<float> dist_theta(-0.2f, 0.2f);
 
     float init_weight = 1.0f / num_particles;
     for(int i = 0; i < num_particles; ++i) {

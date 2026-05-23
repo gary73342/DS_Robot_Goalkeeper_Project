@@ -80,8 +80,7 @@ int main(int argc, char** argv) {
     float dt      = 1.0f / loop_hz;
     ros::Rate rate(loop_hz);
 
-    ROS_INFO("=== [定位節點] 啟動，%.0f Hz，%d 個粒子 ===", loop_hz, 300);
-
+    ROS_INFO("=== [Localization] Started %.0f Hz %d particles ===", loop_hz, 300);
     // ==========================================================================
     // 主迴圈
     // ==========================================================================
@@ -90,7 +89,7 @@ int main(int argc, char** argv) {
 
         // 等 odom 資料就緒
         if (latest_odom == nullptr) {
-            ROS_WARN_THROTTLE(2.0, "[定位] 等待 odom 資料...");
+            ROS_WARN_THROTTLE(2.0, "[Localization] Waiting for odom...");
             rate.sleep();
             continue;
         }
@@ -99,8 +98,8 @@ int main(int argc, char** argv) {
         // 階段 A：從 odom 取得實際速度，餵給粒子濾波 predict
         // ----------------------------------------------------------------------
         // 用 odom 實測速度而非 cmd_vel 指令速度，更準確反映機器人真實運動
-        float actual_v = static_cast<float>(latest_odom->twist.twist.linear.x);
-        float actual_w = static_cast<float>(latest_odom->twist.twist.angular.z);
+        float actual_v = -(latest_odom->twist.twist.linear.x);  // 加負號修正方向
+        float actual_w = latest_odom->twist.twist.angular.z;
 
         pf.predict(actual_v, actual_w, dt);
 
@@ -115,10 +114,8 @@ int main(int argc, char** argv) {
         float ex, ey, et;
         pf.getEstimate(ex, ey, et);
 
-        ROS_INFO_THROTTLE(0.5,
-            "[定位] 全域位置 X=%.2f m  Y=%.2f m  Theta=%.2f rad  "
-            "門柱數=%zu",
-            ex, ey, et, latest_posts.size());
+        ROS_INFO_THROTTLE(0.5, "[Localization] Pose X=%.2f Y=%.2f Theta=%.2f posts=%zu",
+                  ex, ey, et, latest_posts.size());
 
         // ----------------------------------------------------------------------
         // 階段 D：發布機器人全域姿態
@@ -141,9 +138,8 @@ int main(int argc, char** argv) {
                 float ball_global_y = ey + ball_local_x * sin(et)
                                          + ball_local_y * cos(et);
                 ball_msg.data = {1.0f, ball_global_x, ball_global_y};
-                ROS_INFO_THROTTLE(0.5,
-                    "[定位] 球全域座標 X=%.2f m  Y=%.2f m",
-                    ball_global_x, ball_global_y);
+                ROS_INFO_THROTTLE(0.5, "[Localization] Ball world X=%.2f Y=%.2f",
+                  ball_global_x, ball_global_y);
             } else {
                 ball_msg.data = {0.0f, 0.0f, 0.0f};
             }

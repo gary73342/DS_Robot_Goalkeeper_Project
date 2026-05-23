@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
     float loop_hz = 20.0f;
     ros::Rate rate(loop_hz);
 
-    ROS_INFO("=== [感知節點] 啟動，%.0f Hz ===", loop_hz);
+    ROS_INFO("=== [Perception] Started, %.0f Hz ===", loop_hz);
 
     // ==========================================================================
     // 主迴圈
@@ -70,7 +70,7 @@ int main(int argc, char** argv) {
         ros::spinOnce();
 
         if (latest_scan == nullptr) {
-            ROS_WARN_THROTTLE(2.0, "[感知] 等待 LiDAR 資料...");
+            ROS_WARN_THROTTLE(2.0, "[Perception] Waiting for LiDAR...");
             rate.sleep();
             continue;
         }
@@ -115,7 +115,7 @@ int main(int argc, char** argv) {
             std_msgs::Float32MultiArray ball_msg;
             if (ball_detected) {
                 ball_msg.data = {1.0f, ball_obs.x, ball_obs.y};
-                ROS_INFO_THROTTLE(0.5, "[感知] 球：局部座標 x=%.2f y=%.2f 距離=%.2f m",
+                ROS_INFO_THROTTLE(0.5, "[Perception] Ball: x=%.2f y=%.2f dist=%.2f m",
                                   ball_obs.x, ball_obs.y, min_ball_dist);
             } else {
                 ball_msg.data = {0.0f, 0.0f, 0.0f};
@@ -133,8 +133,7 @@ int main(int argc, char** argv) {
             posts_pub.publish(posts_msg);
 
             for (size_t i = 0; i < found_posts.size(); ++i) {
-                ROS_INFO_THROTTLE(0.5,
-                    "[感知] 門柱 %zu：x=%.2f y=%.2f 距離=%.2f m",
+                ROS_INFO_THROTTLE(0.5, "[Perception] Post %zu: x=%.2f y=%.2f dist=%.2f m",
                     i + 1, found_posts[i].x, found_posts[i].y,
                     hypot(found_posts[i].x, found_posts[i].y));
             }
