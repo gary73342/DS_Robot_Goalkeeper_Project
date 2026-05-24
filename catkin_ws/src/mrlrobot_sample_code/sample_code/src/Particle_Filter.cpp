@@ -80,10 +80,12 @@ void Localizer::update(const std::vector<Observation>& obs_list) {
                     min_dist_sq = dist_sq;
                 }
             }
-            // 如果這個假想門柱離地圖上真實門柱太遠 (例如超過 0.6 公尺)
-            // 代表這 99% 是隨機森林誤判的場外雜訊！我們直接忽略它，不要扣粒子的分數。
-            if (min_dist_sq > pow(0.6f, 2)) {
-                continue; 
+            // 如果這個假想門柱離地圖上真實門柱太遠 (超過 0.6 公尺)，代表此粒子位置錯誤，
+            // 給予重懲罰讓它在重採樣時被淘汰。不可 continue 跳過（否則壞粒子 weight 不降，
+            // 永遠無法收斂）。
+            if (min_dist_sq > pow(0.25f, 2)) {
+                prob *= 1e-4f;
+                continue;
             }
 
             // 使用高斯分佈計算似然度 (Likelihood)
@@ -155,6 +157,15 @@ void Localizer::normalizeAndResample() {
     }
     
     particles = new_particles;
+}
+
+// 取得粒子雲在 X 軸的加權方差
+float Localizer::getVarianceX() {
+    float ex = 0.0f;
+    for (const auto& p : particles) ex += p.weight * p.x;
+    float var = 0.0f;
+    for (const auto& p : particles) var += p.weight * (p.x - ex) * (p.x - ex);
+    return var;
 }
 
 // 取得估計值

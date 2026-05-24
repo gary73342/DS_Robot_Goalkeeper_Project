@@ -20,6 +20,7 @@ import numpy as np
 import math
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Float32MultiArray
+from nav_msgs.msg import Odometry
 
 # ==============================================================================
 # ★ 調教區：所有需要調整的參數都在這裡，不需要動其他地方
@@ -53,6 +54,12 @@ STOP_THRESHOLD  = 0.02   # 死區：誤差小於此值停止（m）
 
 # LOST 狀態：連續幾秒沒有有效觀測就停止攔截
 LOST_TIMEOUT    = 0.5    # 秒
+
+# 定位收斂門檻：粒子雲 X 軸方差低於此值時視為收斂，切換至絕對位置控制
+LOCALIZED_VAR_THRESHOLD = 0.02   # 對應標準差約 0.14m
+
+# 未收斂時的 odom 相對巡邏範圍（±公尺，從啟動點算起）
+PATROL_RELATIVE_RANGE   = 0.2
 
 # 系統延遲補償（從發出指令到馬達開始動的延遲，單位秒）
 # SYSTEM_DELAY    = 0.08
@@ -212,10 +219,17 @@ class FusionNode:
         self.last_valid_obs_time = None
         self.is_lost = True
 
+        # 定位收斂狀態
+        self.is_localized = False
+
+        # odom 追蹤（未收斂時用相對位移巡邏）
+        self.odom_x = 0.0
+        self.odom_x_origin = None   # 第一筆 odom 到來時記錄
+
         # 巡邏模式狀態
-        self.patrol_target_x = FIELD_X_MAX   # 先往右邊走
-        self.patrol_timer    = rospy.Timer(rospy.Duration(0.1),
-                                           self._patrol_callback)
+        self.patrol_target_x = FIELD_X_MAX          # 收斂後的絕對位置目標
+        self.patrol_target_relative = PATROL_RELATIVE_RANGE  # 未收斂時的相對位移目標
+        self.patrol_timer = rospy.Timer(rospy.Duration(0.1),self._patrol_callback)
 
         # Publisher
         self.pub_vel = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
@@ -227,6 +241,8 @@ class FusionNode:
                          self.lidar_callback,  queue_size=1)
         rospy.Subscriber("/robot_pose",        Float32MultiArray,
                          self.pose_callback,   queue_size=1)
+        rospy.Subscriber("/odom",              Odometry,
+                         self.odom_callback,   queue_size=1)
 
         rospy.loginfo("=" * 50)
         rospy.loginfo("[Fusion] 節點啟動")
@@ -258,11 +274,24 @@ class FusionNode:
     # 機器人姿態 callback
     # ------------------------------------------------------------------
 
+    def odom_callback(self, msg):
+        current_x = msg.pose.pose.position.x
+        if self.odom_x_origin is None:
+            self.odom_x_origin = current_x
+            rospy.loginfo("[Fusion] odom 原點記錄：X=%.3f", current_x)
+        self.odom_x = current_x
+
     def pose_callback(self, msg):
         self.robot_x     = msg.data[0]
         self.robot_y     = msg.data[1]
         self.robot_theta = msg.data[2]
         self.has_pose    = True
+
+        if len(msg.data) >= 4 and not self.is_localized:
+            var_x = msg.data[3]
+            if var_x < LOCALIZED_VAR_THRESHOLD:
+                self.is_localized = True
+                rospy.logwarn("[Fusion] 定位收斂！var_x=%.4f → 切換至絕對位置控制", var_x)
 
     # ------------------------------------------------------------------
     # 相機 callback（~30Hz）
@@ -432,34 +461,46 @@ class FusionNode:
         """
         10Hz 定時器：只有在 LOST 狀態下才執行巡邏。
         攔截模式時由 camera/lidar callback 發出指令，這裡不干涉。
+
+        定位未收斂：用 odom 相對位移巡邏（±PATROL_RELATIVE_RANGE），
+                    不依賴可能錯誤的粒子濾波輸出。
+        定位已收斂：改用絕對位置（robot_x），在 FIELD_X_MIN ~ FIELD_X_MAX 之間巡邏。
         """
-        if not self.is_lost or not self.has_pose:
+        if not self.is_lost:
             return
 
-        error = self.patrol_target_x - self.robot_x
+        if self.is_localized:
+            # --- 絕對位置巡邏 ---
+            if not self.has_pose:
+                return
+            error = self.patrol_target_x - self.robot_x
+            if abs(error) < 0.08:
+                self.patrol_target_x = (FIELD_X_MIN
+                                        if self.patrol_target_x == FIELD_X_MAX
+                                        else FIELD_X_MAX)
+            rospy.loginfo_throttle(0.5,
+                "[PATROL-ABS] 目標X=%+.2f 機器人X=%+.2f 誤差=%+.2f",
+                self.patrol_target_x, self.robot_x, error)
+        else:
+            # --- odom 相對位移巡邏（定位未收斂）---
+            if self.odom_x_origin is None:
+                return
+            relative_x = self.odom_x - self.odom_x_origin
+            error = self.patrol_target_relative - relative_x
+            if abs(error) < 0.08:
+                self.patrol_target_relative = -self.patrol_target_relative  # 左右切換
+            rospy.loginfo_throttle(0.5,
+                "[PATROL-REL] 目標相對X=%+.2f 目前相對X=%+.2f 誤差=%+.2f",
+                self.patrol_target_relative, relative_x, error)
 
-        # 到達巡邏目標附近就切換方向
-        if abs(error) < 0.08:
-            self.patrol_target_x = (FIELD_X_MIN
-                                    if self.patrol_target_x == FIELD_X_MAX
-                                    else FIELD_X_MAX)
-            rospy.loginfo_throttle(1.0, "[Fusion] PATROL 換向 → 目標X=%.2f",
-                                   self.patrol_target_x)
-
-        # P-Control（巡邏速度限制在 MAX_SPEED 的一半，不用跑那麼快）
         speed = KP_LINEAR * error
-        speed = max(min(speed,  MAX_SPEED * 0.5), -MAX_SPEED * 0.5)
+        speed = max(min(speed, MAX_SPEED * 0.5), -MAX_SPEED * 0.5)
         if abs(speed) < MIN_SPEED and abs(error) > 0.08:
             speed = math.copysign(MIN_SPEED, speed)
 
         cmd = Twist()
         cmd.linear.x = speed
         self.pub_vel.publish(cmd)
-
-        side = "右側(+%.2f)" % FIELD_X_MAX if self.patrol_target_x > 0 else "左側(%.2f)" % FIELD_X_MIN
-        rospy.loginfo_throttle(0.5,
-            "[PATROL] 前往%s | 機器人X=%+.2f 誤差=%+.2f | 速度=%+.2f",
-            side, self.robot_x, error, speed)
     # ------------------------------------------------------------------
     # 啟動
     # ------------------------------------------------------------------

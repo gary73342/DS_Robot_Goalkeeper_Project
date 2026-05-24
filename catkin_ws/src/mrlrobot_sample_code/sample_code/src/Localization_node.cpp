@@ -118,8 +118,9 @@ int main(int argc, char** argv) {
         float ex, ey, et;
         pf.getEstimate(ex, ey, et);
 
-        ROS_INFO_THROTTLE(0.5, "[Localization] Pose X=%.2f Y=%.2f Theta=%.2f posts=%zu",
-                  ex, ey, et, latest_posts.size());
+        float var_x = pf.getVarianceX();
+        ROS_INFO_THROTTLE(0.5, "[Localization] Pose X=%.2f Y=%.2f Theta=%.2f var_x=%.4f posts=%zu",
+                  ex, ey, et, var_x, latest_posts.size());
 
         // ----------------------------------------------------------------------
         // 階段 C2：發布粒子點雲給 RViz 視覺化
@@ -149,7 +150,7 @@ int main(int argc, char** argv) {
         // ----------------------------------------------------------------------
         {
             std_msgs::Float32MultiArray pose_msg;
-            pose_msg.data = {ex, ey, et};
+            pose_msg.data = {ex, ey, et, var_x};
             robot_pose_pub.publish(pose_msg);
         }
 

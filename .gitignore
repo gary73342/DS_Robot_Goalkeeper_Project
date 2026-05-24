@@ -24,6 +24,9 @@ __pycache__/
 *.pyc
 *.pyo
 
+python/H.npy
+log_filter.py
+
 # MATLAB/Octave
 *.asv
 
@@ -33,3 +36,10 @@ Thumbs.db
 
 # 虛擬環境
 .venv/
+
+# tmux控制檔案
+*.sh
+
+TODO.txt
+
+

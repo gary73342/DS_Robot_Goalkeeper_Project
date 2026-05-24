@@ -45,6 +45,9 @@ public:
 
     // 取得所有粒子（供 RViz 視覺化）
     const std::vector<Particle>& getParticles() const { return particles; }
+
+    // 取得粒子雲在 X 軸的加權方差（判斷定位是否收斂）
+    float getVarianceX();
 };
 
 #endif // LOCALIZATION_H
