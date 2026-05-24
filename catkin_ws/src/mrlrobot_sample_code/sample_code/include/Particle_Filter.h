@@ -42,6 +42,9 @@ public:
 
     // 取得當前最高置信度的估計姿態
     void getEstimate(float& ex, float& ey, float& et);
+
+    // 取得所有粒子（供 RViz 視覺化）
+    const std::vector<Particle>& getParticles() const { return particles; }
 };
 
 #endif // LOCALIZATION_H

@@ -39,12 +39,15 @@ H_FILE_PATH  = os.path.join(SCRIPT_DIR, "H.npy")
 
 # 球場全域座標（你定義的座標系，單位公尺）
 # 順序必須和校準時點擊的角點順序完全一致
-# 建議順序：左下 → 右下 → 右上 → 左上（順時針或逆時針皆可，但要一致）
 WORLD_POINTS = np.array([
-    [-0.45, 0.0],   # 左下角（防守端左側）
-    [ 0.45, 0.0],   # 右下角（防守端右側）
+    [-0.45, 0.00],  # 左下角（防守端左側）
+    [ 0.45, 0.00],  # 右下角（防守端右側）
     [ 0.45, 2.88],  # 右上角（踢球端右側）
     [-0.45, 2.88],  # 左上角（踢球端左側）
+    [-0.45, 0.96],  # 左邊 1/3 處
+    [-0.45, 1.92],  # 左邊 2/3 處
+    [ 0.45, 0.96],  # 右邊 1/3 處
+    [ 0.45, 1.92],  # 右邊 2/3 處
 ], dtype=np.float32)
 
 # YOLO server UDP 設定
@@ -84,16 +87,22 @@ class RosTopicCapture:
 class HomographyCalibrator:
     """
     互動式 Homography 校準工具。
-    開啟 OpenCV 視窗，讓使用者依序點擊四個角點，
+    開啟 OpenCV 視窗，讓使用者依序點擊八個標定點，
     計算 H 矩陣後存成 H.npy。
     """
 
     POINT_LABELS = [
-        "1: Left-Bottom  (-0.5, 0.0)",
-        "2: Right-Bottom ( 0.5, 0.0)",
-        "3: Right-Top    ( 0.5, 3.0)",
-        "4: Left-Top     (-0.5, 3.0)",
+        "1: Left-Bottom     (-0.45, 0.00)",
+        "2: Right-Bottom    ( 0.45, 0.00)",
+        "3: Right-Top       ( 0.45, 2.88)",
+        "4: Left-Top        (-0.45, 2.88)",
+        "5: Left-1/3        (-0.45, 0.96)",
+        "6: Left-2/3        (-0.45, 1.92)",
+        "7: Right-1/3       ( 0.45, 0.96)",
+        "8: Right-2/3       ( 0.45, 1.92)",
     ]
+
+    NUM_POINTS = len(WORLD_POINTS)   # 8
 
     def __init__(self):
         self.clicked_points = []   # 收集像素座標
@@ -102,7 +111,7 @@ class HomographyCalibrator:
     def _mouse_callback(self, event, x, y, flags, param):
         if event != cv2.EVENT_LBUTTONDOWN:
             return
-        if len(self.clicked_points) >= 4:
+        if len(self.clicked_points) >= self.NUM_POINTS:
             return
 
         self.clicked_points.append([x, y])
@@ -122,10 +131,10 @@ class HomographyCalibrator:
         print("\n" + "="*55)
         print("  Homography 校準模式")
         print("="*55)
-        print("  請依序點擊球場四個角點：")
+        print(f"  請依序點擊球場 {self.NUM_POINTS} 個標定點：")
         for label in self.POINT_LABELS:
             print(f"    {label}")
-        print("\n  點完四個點後按 [Enter] 計算，按 [ESC] 取消")
+        print(f"\n  點完 {self.NUM_POINTS} 個點後按 [Enter] 計算，按 [ESC] 取消")
         print("="*55 + "\n")
 
         cv2.namedWindow("Calibration", cv2.WINDOW_NORMAL)
@@ -142,11 +151,11 @@ class HomographyCalibrator:
 
             # 在畫面上顯示目前狀態
             n = len(self.clicked_points)
-            remaining = 4 - n
+            remaining = self.NUM_POINTS - n
             if remaining > 0:
-                msg = f"請點第 {n+1} 個角點：{self.POINT_LABELS[n]}"
+                msg = f"請點第 {n+1} 個點：{self.POINT_LABELS[n]}"
             else:
-                msg = "四個點已完成！按 [Enter] 確認，[R] 重新來過"
+                msg = f"{self.NUM_POINTS} 個點已完成！按 [Enter] 確認，[R] 重新來過"
 
             cv2.putText(self.display_frame, msg, (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 200, 255), 2)
@@ -167,9 +176,9 @@ class HomographyCalibrator:
 
             elif key == ord('r') or key == ord('R'):
                 self.clicked_points = []
-                print("[校準] 重新來過，請重新點擊四個角點")
+                print(f"[校準] 重新來過，請重新點擊 {self.NUM_POINTS} 個標定點")
 
-            elif key == 13 and len(self.clicked_points) == 4:  # Enter
+            elif key == 13 and len(self.clicked_points) == self.NUM_POINTS:  # Enter
                 break
 
         cv2.destroyAllWindows()
@@ -184,7 +193,7 @@ class HomographyCalibrator:
             print("[校準] Homography 計算失敗！請確認四個點不共線")
             return None
 
-        # 驗證：把四個像素點反算回全域座標，看誤差多大
+        # 驗證：把每個像素點反算回全域座標，看誤差多大
         print("\n  [校準] 驗證誤差：")
         for i, (px, py) in enumerate(self.clicked_points):
             pt = np.array([[[px, py]]], dtype=np.float32)
@@ -266,6 +275,10 @@ class YoloRosNode:
         # 格式：[detected(0/1), X_world, Y_world, conf]
         self.pub = rospy.Publisher("/ball_camera_world",
                                    Float32MultiArray, queue_size=1)
+
+        # Publisher：標註影像，供 RViz Image display 使用
+        self.vis_pub = rospy.Publisher("/ball_detection_image",
+                                       Image, queue_size=1)
 
         # 統計用
         self._det_count  = 0
@@ -372,6 +385,7 @@ class YoloRosNode:
         r = self._call_yolo(frame)
 
         result_msg = Float32MultiArray()
+        vis_frame = frame.copy()
 
         if r["detected"] == 1 and r.get("conf", 1.0) >= CONF_THRESHOLD:
             # bounding box 底部中心點（球接觸地面）
@@ -383,19 +397,27 @@ class YoloRosNode:
 
             result_msg.data = [1.0, X_world, Y_world, conf]
 
+            # 畫紅色框與信心度
+            x1 = int(r["cx"] - r["w"] / 2.0)
+            y1 = int(r["cy"] - r["h"] / 2.0)
+            x2 = int(r["cx"] + r["w"] / 2.0)
+            y2 = int(r["cy"] + r["h"] / 2.0)
+            cv2.rectangle(vis_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+            cv2.putText(vis_frame, f"ball {conf:.2f}", (x1, y1 - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
             self._det_count += 1
-            # 每幀都印，方便觀察（不需要另開 rostopic echo）
             print(f"[YOLO] ✓ 球 全域座標: X={X_world:+.3f}m  Y={Y_world:.3f}m  "
                   f"conf={conf:.2f}  (累計偵測:{self._det_count})")
 
         else:
             result_msg.data = [0.0, 0.0, 0.0, 0.0]
             self._miss_count += 1
-            # 每 10 幀才印一次「未偵測」，避免刷屏
             if self._miss_count % 10 == 1:
                 print(f"[YOLO] ✗ 未偵測到球  (miss:{self._miss_count})")
 
         self.pub.publish(result_msg)
+        self.vis_pub.publish(self.bridge.cv2_to_imgmsg(vis_frame, "bgr8"))
 
     def start(self):
         """

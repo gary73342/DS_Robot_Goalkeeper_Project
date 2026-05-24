@@ -7,6 +7,8 @@
 #include <nav_msgs/Odometry.h>
 #include <std_msgs/Float32MultiArray.h>
 #include <tf/transform_broadcaster.h>
+#include <geometry_msgs/PoseArray.h>
+#include <geometry_msgs/Pose.h>
 
 #include "Particle_Filter.h"
 
@@ -67,6 +69,8 @@ int main(int argc, char** argv) {
         "/robot_pose", 1);
     ros::Publisher ball_world_pub  = nh.advertise<std_msgs::Float32MultiArray>(
         "/ball_lidar_world", 1);
+    ros::Publisher particle_cloud_pub = nh.advertise<geometry_msgs::PoseArray>(
+        "/particle_cloud", 1);
 
     // --- 粒子濾波初始化 ---
     Localizer pf(300);  // 300 個粒子，精度與速度的平衡點
@@ -116,6 +120,29 @@ int main(int argc, char** argv) {
 
         ROS_INFO_THROTTLE(0.5, "[Localization] Pose X=%.2f Y=%.2f Theta=%.2f posts=%zu",
                   ex, ey, et, latest_posts.size());
+
+        // ----------------------------------------------------------------------
+        // 階段 C2：發布粒子點雲給 RViz 視覺化
+        // ----------------------------------------------------------------------
+        {
+            geometry_msgs::PoseArray cloud_msg;
+            cloud_msg.header.stamp    = ros::Time::now();
+            cloud_msg.header.frame_id = "map";
+            for (const auto& p : pf.getParticles()) {
+                geometry_msgs::Pose pose;
+                pose.position.x = p.x;
+                pose.position.y = p.y;
+                pose.position.z = 0.0;
+                tf::Quaternion q;
+                q.setRPY(0, 0, p.theta);
+                pose.orientation.x = q.x();
+                pose.orientation.y = q.y();
+                pose.orientation.z = q.z();
+                pose.orientation.w = q.w();
+                cloud_msg.poses.push_back(pose);
+            }
+            particle_cloud_pub.publish(cloud_msg);
+        }
 
         // ----------------------------------------------------------------------
         // 階段 D：發布機器人全域姿態
