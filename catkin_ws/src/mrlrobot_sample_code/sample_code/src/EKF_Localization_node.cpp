@@ -24,8 +24,8 @@
 #include <nav_msgs/Odometry.h>
 #include <std_msgs/Float32MultiArray.h>
 #include <tf/transform_broadcaster.h>
-#include <geometry_msgs/PoseArray.h>
-#include <geometry_msgs/Pose.h>
+#include <geometry_msgs/Point.h>
+#include <visualization_msgs/Marker.h>
 
 #include "EKF_Localization.h"
 #include "Particle_Filter.h"
@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
     // --- 發布 ---
     ros::Publisher robot_pose_pub     = nh.advertise<std_msgs::Float32MultiArray>("/robot_pose", 1);
     ros::Publisher ball_world_pub     = nh.advertise<std_msgs::Float32MultiArray>("/ball_lidar_world", 1);
-    ros::Publisher particle_cloud_pub = nh.advertise<geometry_msgs::PoseArray>("/particle_cloud", 1);
+    ros::Publisher particle_cloud_pub = nh.advertise<visualization_msgs::Marker>("/particle_cloud", 1);
 
     // --- 定位器初始化 ---
     EKFLocalizer ekf;
@@ -204,9 +204,6 @@ int main(int argc, char** argv) {
         }
 
         const char* state_str = (state == LocState::EKF_PRIMARY) ? "EKF" : "PF";
-        ROS_INFO_THROTTLE(0.3,
-            "[EKF] [%s] Pose X=%.2f Y=%.2f Theta=%.2f var_x=%.4f posts=%zu",
-            state_str, ex, ey, et, var_x, latest_posts.size());
 
         // ------------------------------------------------------------------
         // 發布機器人全域姿態
@@ -228,35 +225,57 @@ int main(int argc, char** argv) {
                 float ball_global_y = ey + ball_local_x * std::sin(et)
                                          + ball_local_y * std::cos(et);
                 ball_msg.data = {1.0f, ball_global_x, ball_global_y};
-                ROS_INFO_THROTTLE(0.3, "[EKF] Ball world X=%.2f Y=%.2f",
-                                  ball_global_x, ball_global_y);
+                ROS_INFO_THROTTLE(0.5,
+                    "[EKF] [%s] X=%+.2f Y=%.2f θ=%+.3f var=%.4f posts=%zu | 球(%+.2f,%.2f)",
+                    state_str, ex, ey, et, var_x, latest_posts.size(),
+                    ball_global_x, ball_global_y);
             } else {
                 ball_msg.data = {0.0f, 0.0f, 0.0f};
+                ROS_INFO_THROTTLE(0.5,
+                    "[EKF] [%s] X=%+.2f Y=%.2f θ=%+.3f var=%.4f posts=%zu | 球:無",
+                    state_str, ex, ey, et, var_x, latest_posts.size());
             }
             ball_world_pub.publish(ball_msg);
         }
 
         // ------------------------------------------------------------------
-        // PF 粒子點雲（RViz 視覺化，PF_RECOVERY 時方便觀察收斂狀況）
+        // PF 粒子點雲（RViz 視覺化，按權重顯示顏色：藍=低權重，綠=中，紅=高權重）
         // ------------------------------------------------------------------
         {
-            geometry_msgs::PoseArray cloud_msg;
-            cloud_msg.header.stamp    = ros::Time::now();
-            cloud_msg.header.frame_id = "map";
-            for (const auto& p : pf.getParticles()) {
-                geometry_msgs::Pose pose;
-                pose.position.x = p.x;
-                pose.position.y = p.y;
-                pose.position.z = 0.0;
-                tf::Quaternion q;
-                q.setRPY(0, 0, p.theta);
-                pose.orientation.x = q.x();
-                pose.orientation.y = q.y();
-                pose.orientation.z = q.z();
-                pose.orientation.w = q.w();
-                cloud_msg.poses.push_back(pose);
+            const auto& particles = pf.getParticles();
+
+            float max_w = 1e-9f;
+            for (const auto& p : particles)
+                if (p.weight > max_w) max_w = p.weight;
+
+            visualization_msgs::Marker marker;
+            marker.header.stamp    = ros::Time::now();
+            marker.header.frame_id = "map";
+            marker.ns              = "particles";
+            marker.id              = 0;
+            marker.type            = visualization_msgs::Marker::SPHERE_LIST;
+            marker.action          = visualization_msgs::Marker::ADD;
+            marker.scale.x = marker.scale.y = marker.scale.z = 0.05;
+            marker.pose.orientation.w = 1.0;
+
+            for (const auto& p : particles) {
+                geometry_msgs::Point pt;
+                pt.x = p.x; pt.y = p.y; pt.z = 0.0;
+                marker.points.push_back(pt);
+
+                // 藍(0)→綠(0.5)→紅(1) 彩虹漸層
+                float t = p.weight / max_w;
+                std_msgs::ColorRGBA c;
+                if (t < 0.5f) {
+                    c.r = 0.0f; c.g = 2.0f * t; c.b = 1.0f - 2.0f * t;
+                } else {
+                    c.r = 2.0f * (t - 0.5f); c.g = 1.0f - 2.0f * (t - 0.5f); c.b = 0.0f;
+                }
+                c.a = 0.7f;
+                marker.colors.push_back(c);
             }
-            particle_cloud_pub.publish(cloud_msg);
+
+            particle_cloud_pub.publish(marker);
         }
 
         // ------------------------------------------------------------------

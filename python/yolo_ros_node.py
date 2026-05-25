@@ -408,8 +408,8 @@ class YoloRosNode:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
             self._det_count += 1
-            print(f"[YOLO] ✓ 球 全域座標: X={X_world:+.3f}m  Y={Y_world:.3f}m  "
-                  f"conf={conf:.2f}  (累計偵測:{self._det_count})")
+            if self._det_count % 10 == 1:
+                print(f"[YOLO] ✓ X={X_world:+.3f}m  Y={Y_world:.3f}m  conf={conf:.2f}")
 
         else:
             result_msg.data = [0.0, 0.0, 0.0, 0.0]

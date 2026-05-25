@@ -115,8 +115,6 @@ int main(int argc, char** argv) {
             std_msgs::Float32MultiArray ball_msg;
             if (ball_detected) {
                 ball_msg.data = {1.0f, ball_obs.x, ball_obs.y};
-                ROS_INFO_THROTTLE(0.3, "[Perception] Ball: x=%.2f y=%.2f dist=%.2f m",
-                                  ball_obs.x, ball_obs.y, min_ball_dist);
             } else {
                 ball_msg.data = {0.0f, 0.0f, 0.0f};
             }
@@ -161,14 +159,34 @@ int main(int argc, char** argv) {
             }
             posts_pub.publish(posts_msg);
 
-            for (size_t i = 0; i < valid_posts.size(); ++i) {
-                ROS_INFO_THROTTLE(0.3, "[Perception] Post %zu: x=%.2f y=%.2f dist=%.2f m",
-                    i + 1, valid_posts[i].x, valid_posts[i].y,
-                    hypot(valid_posts[i].x, valid_posts[i].y));
-            }
             if (found_posts.size() >= 2 && valid_posts.size() < 2) {
                 ROS_WARN_THROTTLE(0.5, "[Perception] Posts filtered out: %zu detected, no pair within %.2fm of goal width",
                     found_posts.size(), GATE_DIST);
+            }
+
+            if (ball_detected) {
+                if (valid_posts.size() == 2) {
+                    ROS_INFO_THROTTLE(1.0,
+                        "[Perception] 球 dist=%.2fm | 門柱2根: (%.2f,%.2f) (%.2f,%.2f)",
+                        min_ball_dist,
+                        valid_posts[0].x, valid_posts[0].y,
+                        valid_posts[1].x, valid_posts[1].y);
+                } else {
+                    ROS_INFO_THROTTLE(1.0,
+                        "[Perception] 球 dist=%.2fm | 門柱%zu根",
+                        min_ball_dist, valid_posts.size());
+                }
+            } else {
+                if (valid_posts.size() == 2) {
+                    ROS_INFO_THROTTLE(1.0,
+                        "[Perception] 球:無 | 門柱2根: (%.2f,%.2f) (%.2f,%.2f)",
+                        valid_posts[0].x, valid_posts[0].y,
+                        valid_posts[1].x, valid_posts[1].y);
+                } else {
+                    ROS_INFO_THROTTLE(1.0,
+                        "[Perception] 球:無 | 門柱%zu根",
+                        valid_posts.size());
+                }
             }
         }
 

@@ -8,7 +8,7 @@ Panels:
         - /LaserScan1
         - /Marker1
         - /Image1
-        - /PoseArray1
+        - /Marker2
       Splitter Ratio: 0.5796766877174377
     Tree Height: 329
   - Class: rviz/Selection
@@ -28,7 +28,7 @@ Panels:
   - Class: rviz/Time
     Name: Time
     SyncMode: 0
-    SyncSource: LaserScan
+    SyncSource: ""
 Preferences:
   PromptSaveOnExit: true
 Toolbars:
@@ -128,22 +128,13 @@ Visualization Manager:
       Transport Hint: raw
       Unreliable: false
       Value: true
-    - Alpha: 1
-      Arrow Length: 0.05000000074505806
-      Axes Length: 0.30000001192092896
-      Axes Radius: 0.009999999776482582
-      Class: rviz/PoseArray
-      Color: 255; 25; 0
+    - Class: rviz/Marker
       Enabled: true
-      Head Length: 0.07000000029802322
-      Head Radius: 0.029999999329447746
-      Name: PoseArray
-      Queue Size: 10
-      Shaft Length: 0.23000000417232513
-      Shaft Radius: 0.009999999776482582
-      Shape: Arrow (Flat)
-      Topic: particle_cloud
-      Unreliable: false
+      Marker Topic: /particle_cloud
+      Name: Marker
+      Namespaces:
+        {}
+      Queue Size: 1
       Value: true
   Enabled: true
   Global Options:

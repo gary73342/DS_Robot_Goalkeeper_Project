@@ -545,10 +545,10 @@ class FusionNode:
         cmd.angular.z = self._theta_correction()
         self.pub_vel.publish(cmd)
 
-        rospy.loginfo_throttle(0.2,
-            "[TRACK] 球(%+.2f, %.2f) v=(%+.2f, %+.2f) | "
-            "機器人X=%+.2f 誤差=%+.2f | 速度=%+.2f θ=%+.3f",
-            bx, by, vx, vy, self.robot_x, error, speed, self.robot_theta)
+        ball_speed = math.hypot(vx, vy)
+        rospy.loginfo_throttle(0.5,
+            "[Fusion] TRACK | 機X=%+.2f 落點X=%+.2f 誤差=%+.2f 球速=%.2f",
+            self.robot_x, target_x, error, ball_speed)
 
 
     def _theta_correction(self):
@@ -596,8 +596,8 @@ class FusionNode:
                                         if self.patrol_target_x == FIELD_X_MAX
                                         else FIELD_X_MAX)
             rospy.loginfo_throttle(0.5,
-                "[PATROL-ABS] 目標X=%+.2f 機器人X=%+.2f 誤差=%+.2f",
-                self.patrol_target_x, self.robot_x, error)
+                "[Fusion] PATROL | 機X=%+.2f 目標X=%+.2f",
+                self.robot_x, self.patrol_target_x)
         else:
             # --- odom 相對位移巡邏（定位未收斂）---
             if self.odom_x_origin is None:
@@ -607,8 +607,8 @@ class FusionNode:
             if abs(error) < 0.08:
                 self.patrol_target_relative = -self.patrol_target_relative  # 左右切換
             rospy.loginfo_throttle(0.5,
-                "[PATROL-REL] 目標相對X=%+.2f 目前相對X=%+.2f 誤差=%+.2f",
-                self.patrol_target_relative, relative_x, error)
+                "[Fusion] PATROL(REL) | 機X=%+.2f 目標X=%+.2f",
+                relative_x, self.patrol_target_relative)
 
         speed = KP_LINEAR * error
         speed = np.clip(speed, -PATROL_MAX_SPEED, PATROL_MAX_SPEED)
