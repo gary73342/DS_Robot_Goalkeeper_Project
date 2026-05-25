@@ -7,6 +7,7 @@ Panels:
         - /Global Options1
         - /LaserScan1
         - /Marker1
+        - /Image1
         - /PoseArray1
       Splitter Ratio: 0.5796766877174377
     Tree Height: 329
@@ -27,7 +28,7 @@ Panels:
   - Class: rviz/Time
     Name: Time
     SyncMode: 0
-    SyncSource: ""
+    SyncSource: LaserScan
 Preferences:
   PromptSaveOnExit: true
 Toolbars:
@@ -70,7 +71,7 @@ Visualization Manager:
       Max Color: 255; 255; 255
       Min Color: 0; 0; 0
       Name: LaserScan
-      Position Transformer: ""
+      Position Transformer: XYZ
       Queue Size: 10
       Selectable: true
       Size (Pixels): 3
@@ -148,7 +149,7 @@ Visualization Manager:
   Global Options:
     Background Color: 48; 48; 48
     Default Light: true
-    Fixed Frame: base_link
+    Fixed Frame: base_scan
     Frame Rate: 30
   Name: root
   Tools:

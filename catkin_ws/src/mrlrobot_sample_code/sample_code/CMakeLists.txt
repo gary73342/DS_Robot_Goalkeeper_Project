@@ -13,6 +13,7 @@ find_package(catkin REQUIRED COMPONENTS
   nav_msgs
   visualization_msgs
 )
+find_package(Eigen3 REQUIRED)
 
 catkin_package()
 
@@ -20,6 +21,7 @@ catkin_package()
 include_directories(
   include/
   ${catkin_INCLUDE_DIRS}
+  ${EIGEN3_INCLUDE_DIRS}
 )
 
 # 3a. perception_node：感知 + RViz
@@ -33,12 +35,20 @@ target_link_libraries(perception_node
   ${catkin_LIBRARIES}
 )
 
-# 3b. localization_node：定位 + TF 廣播
-#     需要：粒子濾波
+# 3b. localization_node：定位 + TF 廣播（粒子濾波版）
 add_executable(localization_node
   src/Localization_node.cpp
   src/Particle_Filter.cpp
 )
 target_link_libraries(localization_node
+  ${catkin_LIBRARIES}
+)
+
+# 3c. ekf_localization_node：定位 + TF 廣播（EKF 版）
+add_executable(ekf_localization_node
+  src/EKF_Localization_node.cpp
+  src/EKF_Localization.cpp
+)
+target_link_libraries(ekf_localization_node
   ${catkin_LIBRARIES}
 )

@@ -1,0 +1,48 @@
+[05:05:34] [DEBUG] Sigma 讀取完畢，大小: 7
+[05:05:59] [0m[INFO] [1779656735.744732636]: [Perception] Post 1: x=-0.52 y=-0.40 dist=0.65 m[0m
+[05:05:59] [0m[INFO] [1779656738.394658850]: [Perception] Post 1: x=-0.52 y=-0.40 dist=0.65 m[0m
+[05:05:59] [0m[INFO] [1779656741.043945764]: [Perception] Post 1: x=-0.52 y=-0.40 dist=0.65 m[0m
+[05:05:59] [0m[INFO] [1779656743.743960977]: [Perception] Post 1: x=-0.52 y=-0.40 dist=0.65 m[0m
+[05:05:59] [0m[INFO] [1779656746.393364861]: [Perception] Post 1: x=-0.52 y=-0.40 dist=0.65 m[0m
+[05:05:59] [0m[INFO] [1779656748.994274217]: [Perception] Post 1: x=-0.52 y=-0.40 dist=0.65 m[0m
+[05:05:59] [0m[INFO] [1779656751.694469029]: [Perception] Post 1: x=-0.52 y=-0.40 dist=0.65 m[0m
+[05:05:59] [0m[INFO] [1779656754.294048986]: [Perception] Post 1: x=-0.52 y=-0.40 dist=0.65 m[0m
+[05:05:59] [0m[INFO] [1779656756.993571400]: [Perception] Post 1: x=-0.52 y=-0.40 dist=0.65 m[0m
+[05:06:22] [0m[INFO] [1779656759.593204346]: [Perception] Post 1: x=-0.52 y=-0.40 dist=0.65 m[0m
+[05:06:22] [0m[INFO] [1779656762.193907097]: [Perception] Post 1: x=-0.52 y=-0.40 dist=0.65 m[0m
+[05:06:22] [0m[INFO] [1779656764.843835099]: [Perception] Post 1: x=-0.36 y=-0.39 dist=0.53 m[0m
+[05:06:22] [0m[INFO] [1779656767.544012512]: [Perception] Post 1: x=-0.55 y=-0.40 dist=0.69 m[0m
+[05:06:22] [0m[INFO] [1779656770.244337103]: [Perception] Post 1: x=-0.60 y=-0.41 dist=0.72 m[0m
+[05:06:22] [0m[INFO] [1779656772.893790535]: [Perception] Post 1: x=-0.34 y=-0.40 dist=0.53 m[0m
+[05:06:22] [0m[INFO] [1779656775.544617437]: [Perception] Post 1: x=-0.55 y=-0.41 dist=0.69 m[0m
+[05:06:22] [0m[INFO] [1779656778.144483451]: [Perception] Post 1: x=-0.56 y=-0.41 dist=0.69 m[0m
+[05:06:22] [0m[INFO] [1779656780.893629228]: [Perception] Post 1: x=-0.33 y=-0.41 dist=0.53 m[0m
+[05:06:22] [0m[INFO] [1779656782.843616621]: [Perception] Ball: x=-0.82 y=0.36 dist=0.90 m[0m
+[05:06:44] [0m[INFO] [1779656784.494415703]: [Perception] Post 1: x=-0.37 y=-0.41 dist=0.55 m[0m
+[05:06:44] [0m[INFO] [1779656787.194838684]: [Perception] Post 1: x=-0.60 y=-0.42 dist=0.73 m[0m
+[05:06:44] [0m[INFO] [1779656789.294433405]: [Perception] Post 1: x=-0.38 y=-0.42 dist=0.56 m[0m
+[05:06:44] [0m[INFO] [1779656791.943824978]: [Perception] Post 1: x=-0.46 y=-0.42 dist=0.62 m[0m
+[05:06:44] [0m[INFO] [1779656794.544412088]: [Perception] Post 1: x=-0.62 y=-0.42 dist=0.75 m[0m
+[05:06:44] [0m[INFO] [1779656796.344296200]: [Perception] Ball: x=0.02 y=0.75 dist=0.75 m[0m
+[05:06:44] [0m[INFO] [1779656798.794474542]: [Perception] Post 1: x=-0.65 y=-0.39 dist=0.76 m[0m
+[05:06:44] [0m[INFO] [1779656801.093860691]: [Perception] Ball: x=0.03 y=0.63 dist=0.63 m[0m
+[05:06:44] [0m[INFO] [1779656803.044100520]: [Perception] Post 1: x=-0.59 y=-0.39 dist=0.71 m[0m
+[05:06:58] [0m[INFO] [1779656805.644058706]: [Perception] Post 1: x=-0.50 y=-0.39 dist=0.64 m[0m
+[05:06:58] [0m[INFO] [1779656807.544192205]: [Perception] Ball: x=0.16 y=0.97 dist=0.98 m[0m
+[05:06:58] [0m[INFO] [1779656808.843500224]: [Perception] Post 1: x=-0.35 y=-0.39 dist=0.52 m[0m
+[05:06:58] [0m[INFO] [1779656810.194343761]: [Perception] Ball: x=0.05 y=0.91 dist=0.91 m[0m
+[05:06:58] [0m[INFO] [1779656811.394855475]: [Perception] Post 1: x=-0.51 y=-0.39 dist=0.64 m[0m
+[05:06:58] [0m[INFO] [1779656812.794566076]: [Perception] Ball: x=0.31 y=0.91 dist=0.96 m[0m
+[05:06:58] [0m[INFO] [1779656814.094746882]: [Perception] Post 1: x=-0.57 y=-0.40 dist=0.70 m[0m
+[05:06:58] [0m[INFO] [1779656815.594479175]: [Perception] Ball: x=0.15 y=0.91 dist=0.93 m[0m
+[05:06:58] [0m[INFO] [1779656816.744689363]: [Perception] Post 1: x=-0.33 y=-0.39 dist=0.51 m[0m
+[05:07:11] [0m[INFO] [1779656818.244032615]: [Perception] Ball: x=0.04 y=0.92 dist=0.92 m[0m
+[05:07:11] [0m[INFO] [1779656819.393508091]: [Perception] Post 1: x=-0.49 y=-0.39 dist=0.63 m[0m
+[05:07:11] [0m[INFO] [1779656820.893620927]: [Perception] Ball: x=0.26 y=0.92 dist=0.95 m[0m
+[05:07:11] [0m[INFO] [1779656822.243069378]: [Perception] Ball: x=0.13 y=0.92 dist=0.93 m[0m
+[05:07:11] [0m[INFO] [1779656823.643179277]: [Perception] Post 1: x=-0.48 y=-0.40 dist=0.63 m[0m
+[05:07:11] [0m[INFO] [1779656824.993103437]: [Perception] Ball: x=0.13 y=0.92 dist=0.93 m[0m
+[05:07:11] [0m[INFO] [1779656826.294273751]: [Perception] Ball: x=0.13 y=0.91 dist=0.92 m[0m
+[05:07:11] [0m[INFO] [1779656827.844181983]: [Perception] Ball: x=0.13 y=0.92 dist=0.93 m[0m
+[05:07:11] [0m[INFO] [1779656828.894320729]: [Perception] Post 1: x=-0.48 y=-0.40 dist=0.63 m[0m
+[05:07:11] [0m[INFO] [1779656830.493610243]: [Perception] Ball: x=0.12 y=0.91 dist=0.92 m[0m

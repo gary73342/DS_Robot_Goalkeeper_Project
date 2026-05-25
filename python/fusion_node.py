@@ -15,12 +15,14 @@ fusion_node.py
   python3 fusion_node.py
 """
 
+import sys
 import rospy
 import numpy as np
 import math
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Float32MultiArray
 from nav_msgs.msg import Odometry
+from log import setup_log
 
 # ==============================================================================
 # ★ 調教區：所有需要調整的參數都在這裡，不需要動其他地方
@@ -30,6 +32,19 @@ from nav_msgs.msg import Odometry
 FIELD_X_MIN    = -0.45
 FIELD_X_MAX    =  0.45
 DEFENSE_LINE_Y =  0.5   # 機器人守在離底線 0.5m 處
+
+# 攔截模式硬性邊界（略小於球門柱，預留煞車距離）
+GUARD_X_MIN    = -0.42
+GUARD_X_MAX    =  0.42
+
+# --- 實際場地邊界（用於過濾場外誤偵測）---
+# 注意：這跟 FIELD_X_MIN/MAX 不同，那是機器人的移動範圍；這是實體場地大小
+BALL_FIELD_X_MIN = -1.0   # 場地左邊界（公尺）
+BALL_FIELD_X_MAX = +1.0   # 場地右邊界（公尺）
+BALL_FIELD_Y_MAX =  3.5   # 場地遠端邊界（公尺）
+
+# --- 相機信心門檻 ---
+CONF_MIN_CAM = 0.70   # 低於此值的偵測直接忽略，不進入 EKF
 
 # --- EKF 雜訊參數 ---
 # 過程雜訊（Q）：數字越大代表你越不相信物理模型，EKF 反應越靈敏但越抖
@@ -47,13 +62,23 @@ R_LIDAR_ALPHA = 0.5
 MAHAL_GATE = 5.99
 
 # --- 控制參數 ---
-KP_LINEAR       = 2.0    # P-Control 增益
-MAX_SPEED       = 0.22   # 最大線速度（m/s）
-MIN_SPEED       = 0.08   # 最小啟動速度（m/s）
-STOP_THRESHOLD  = 0.02   # 死區：誤差小於此值停止（m）
+KP_LINEAR        = 2.0    # P-Control 增益
+MAX_SPEED        = 0.22   # 最大線速度（m/s）
+MIN_SPEED        = 0.08   # 最小啟動速度（m/s）
+STOP_THRESHOLD   = 0.02   # 死區：誤差小於此值停止（m）
+
+KP_ANGULAR       = 2.0    # 角度修正 P-Control 增益（加大以克服機械偏差）
+MAX_ANGULAR_SPEED = 0.5   # 最大旋轉速度（rad/s）
+THETA_DEAD_ZONE  = 0.03   # 角度死區（rad，約 1.7°），低於此值不修正
+
+# 速度 Ramp（緩慢起步 / 煞車）
+PATROL_MAX_SPEED = 0.20   # 巡邏最大速度（m/s）
+MAX_ACCEL        = 0.8    # 加速度上限（m/s²）—— 起步緩慢加速
+MAX_DECEL        = 1.2    # 減速度上限（m/s²）—— 煞車稍快但不急停
 
 # LOST 狀態：連續幾秒沒有有效觀測就停止攔截
-LOST_TIMEOUT    = 0.5    # 秒
+LOST_TIMEOUT      = 0.5   # 秒：進入 LOST 模式（回巡邏），EKF 繼續預測
+EKF_RESET_TIMEOUT = 1.5   # 秒：球真的消失才 reset EKF，清除速度記憶
 
 # 定位收斂門檻：粒子雲 X 軸方差低於此值時視為收斂，切換至絕對位置控制
 LOCALIZED_VAR_THRESHOLD = 0.02   # 對應標準差約 0.14m
@@ -66,6 +91,14 @@ PATROL_RELATIVE_RANGE   = 0.2
 # --- 來球判斷 ---
 # 球的 Y 方向速度小於此值（負數，朝機器人）才觸發攔截
 # BALL_INCOMING_VY = -0.1  # m/s
+
+# ==============================================================================
+# 工具函式
+# ==============================================================================
+
+def _in_field(x, y):
+    """球是否在實體場地範圍內"""
+    return BALL_FIELD_X_MIN <= x <= BALL_FIELD_X_MAX and y <= BALL_FIELD_Y_MAX
 
 # ==============================================================================
 # Asynchronous EKF
@@ -231,6 +264,10 @@ class FusionNode:
         self.patrol_target_relative = PATROL_RELATIVE_RANGE  # 未收斂時的相對位移目標
         self.patrol_timer = rospy.Timer(rospy.Duration(0.1),self._patrol_callback)
 
+        # 速度 Ramp 狀態（緩慢起步 / 煞車）
+        self.current_speed  = 0.0   # 上次實際發出的速度
+        self.ramp_last_time = None
+
         # Publisher
         self.pub_vel = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
 
@@ -314,14 +351,28 @@ class FusionNode:
         Y_cam  = msg.data[2]
         conf   = msg.data[3]
 
+        if conf < CONF_MIN_CAM:
+            self._check_lost()
+            return
+
         R = compute_R_camera(X_cam, Y_cam,
                               self.robot_x, self.robot_y, conf)
         accepted = self.ekf.correction([X_cam, Y_cam], R)
 
         if accepted:
-            self.last_valid_obs_time = rospy.Time.now().to_sec()
-            self.is_lost = False
-            self._publish_control()
+            if _in_field(X_cam, Y_cam):
+                self.last_valid_obs_time = rospy.Time.now().to_sec()
+                self.is_lost = False
+                self._publish_control()
+            else:
+                if not self.is_lost:
+                    rospy.logwarn("[Fusion] 球在場外 (%.2f, %.2f)，立即切換至巡邏", X_cam, Y_cam)
+                    self.is_lost = True
+                    self._stop_robot()
+                else:
+                    rospy.logwarn_throttle(1.0,
+                        "[Fusion] 球在場外 (%.2f, %.2f)，維持巡邏", X_cam, Y_cam)
+                self._check_lost()
 
     # ------------------------------------------------------------------
     # 光達 callback（~10Hz）
@@ -348,25 +399,56 @@ class FusionNode:
         accepted = self.ekf.correction([X_lidar, Y_lidar], R)
 
         if accepted:
-            self.last_valid_obs_time = rospy.Time.now().to_sec()
-            self.is_lost = False
-            self._publish_control()
+            if _in_field(X_lidar, Y_lidar):
+                self.last_valid_obs_time = rospy.Time.now().to_sec()
+                self.is_lost = False
+                self._publish_control()
+            else:
+                if not self.is_lost:
+                    rospy.logwarn("[Fusion] 光達：球在場外 (%.2f, %.2f)，立即切換至巡邏",
+                                  X_lidar, Y_lidar)
+                    self.is_lost = True
+                    self._stop_robot()
+                self._check_lost()
+
+    # ------------------------------------------------------------------
+    # 速度 Ramp：限制每次發布的速度變化率，避免急停急衝
+    # ------------------------------------------------------------------
+
+    def _apply_ramp(self, target_speed):
+        now = rospy.Time.now().to_sec()
+        if self.ramp_last_time is None:
+            self.ramp_last_time = now
+            self.current_speed = 0.0
+            return 0.0
+        dt = min(now - self.ramp_last_time, 0.2)   # 防止長時間暫停後一次跳太多
+        self.ramp_last_time = now
+
+        delta = target_speed - self.current_speed
+        if delta > 0:
+            delta = min(delta, MAX_ACCEL * dt)
+        else:
+            delta = max(delta, -MAX_DECEL * dt)
+        self.current_speed += delta
+        return self.current_speed
 
     # ------------------------------------------------------------------
     # LOST 狀態檢查
     # ------------------------------------------------------------------
 
     def _check_lost(self):
-        """連續 LOST_TIMEOUT 秒沒有有效觀測 → 停止攔截"""
         if self.last_valid_obs_time is None:
             return
         elapsed = rospy.Time.now().to_sec() - self.last_valid_obs_time
-        if elapsed > LOST_TIMEOUT:
-            if not self.is_lost:
-                rospy.logwarn("[Fusion] 球消失超過 %.1f 秒，進入 LOST 模式", LOST_TIMEOUT)
-                self.is_lost = True
-                self.ekf.reset()
+
+        if elapsed > LOST_TIMEOUT and not self.is_lost:
+            rospy.logwarn("[Fusion] 球消失超過 %.1f 秒，進入 LOST 模式（EKF 繼續預測）", LOST_TIMEOUT)
+            self.is_lost = True
             self._stop_robot()
+
+        if elapsed > EKF_RESET_TIMEOUT and self.ekf.initialized:
+            rospy.logwarn("[Fusion] 球消失超過 %.1f 秒，重置 EKF", EKF_RESET_TIMEOUT)
+            self.ekf.reset()
 
     # ------------------------------------------------------------------
     # 攔截決策 + P-Control
@@ -416,8 +498,8 @@ class FusionNode:
                 speed = math.copysign(MIN_SPEED, speed)
             speed = np.clip(speed, -MAX_SPEED, MAX_SPEED)
 
-        cmd.linear.x  = speed
-        cmd.angular.z = 0.0   # 守門員不需要轉彎
+        cmd.linear.x  = -speed   # 負號：正 cmd_vel = 機器人往 -X，需反向
+        cmd.angular.z = 0.0
         self.pub_vel.publish(cmd)
 
         # 終端機輸出（方便 debug，不需要 rostopic echo）
@@ -442,18 +524,35 @@ class FusionNode:
                 speed = math.copysign(MIN_SPEED, speed)
             speed = np.clip(speed, -MAX_SPEED, MAX_SPEED)
 
+        speed = self._apply_ramp(speed)
+
+        # 硬性邊界：已超出球門範圍且仍朝外移動時強制歸零
+        if self.robot_x > GUARD_X_MAX and speed > 0:
+            speed = 0.0
+        elif self.robot_x < GUARD_X_MIN and speed < 0:
+            speed = 0.0
+
         cmd = Twist()
-        cmd.linear.x = speed
-        cmd.angular.z = 0.0
+        cmd.linear.x = -speed
+        cmd.angular.z = self._theta_correction()
         self.pub_vel.publish(cmd)
 
         rospy.loginfo_throttle(0.2,
             "[TRACK] 球(%+.2f, %.2f) v=(%+.2f, %+.2f) | "
-            "機器人X=%+.2f 誤差=%+.2f | 速度=%+.2f",
-            bx, by, vx, vy, self.robot_x, error, speed)
+            "機器人X=%+.2f 誤差=%+.2f | 速度=%+.2f θ=%+.3f",
+            bx, by, vx, vy, self.robot_x, error, speed, self.robot_theta)
 
+
+    def _theta_correction(self):
+        """根據當前 theta 計算角度修正速度，讓機器人保持正面朝向"""
+        if abs(self.robot_theta) < THETA_DEAD_ZONE:
+            return 0.0
+        angular = -KP_ANGULAR * self.robot_theta
+        return float(np.clip(angular, -MAX_ANGULAR_SPEED, MAX_ANGULAR_SPEED))
 
     def _stop_robot(self):
+        self.current_speed  = 0.0   # 清除 ramp 狀態，下次起步重新累加
+        self.ramp_last_time = None
         cmd = Twist()
         self.pub_vel.publish(cmd)
 
@@ -494,18 +593,28 @@ class FusionNode:
                 self.patrol_target_relative, relative_x, error)
 
         speed = KP_LINEAR * error
-        speed = max(min(speed, MAX_SPEED * 0.5), -MAX_SPEED * 0.5)
+        speed = np.clip(speed, -PATROL_MAX_SPEED, PATROL_MAX_SPEED)
         if abs(speed) < MIN_SPEED and abs(error) > 0.08:
             speed = math.copysign(MIN_SPEED, speed)
 
+        speed = self._apply_ramp(speed)
+
         cmd = Twist()
-        cmd.linear.x = speed
+        cmd.linear.x = -speed
+        cmd.angular.z = self._theta_correction()
         self.pub_vel.publish(cmd)
     # ------------------------------------------------------------------
     # 啟動
     # ------------------------------------------------------------------
 
+    def _shutdown(self):
+        rospy.logwarn("[Fusion] 節點關閉，發送停止指令")
+        cmd = Twist()
+        for _ in range(5):
+            self.pub_vel.publish(cmd)
+
     def start(self):
+        rospy.on_shutdown(self._shutdown)
         rospy.spin()
 
 
@@ -514,6 +623,8 @@ class FusionNode:
 # ==============================================================================
 
 if __name__ == "__main__":
+    log_path = sys.argv[1] if len(sys.argv) > 1 else None
+    setup_log(log_path, sample_rate=1)
     try:
         node = FusionNode()
         node.start()

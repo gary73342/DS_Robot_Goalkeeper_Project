@@ -66,6 +66,13 @@ void Localizer::update(const std::vector<Observation>& obs_list) {
     for (auto& p : particles) {
         float prob = 1.0f; // 該粒子的聯合機率
 
+        // 物理邊界：機器人不可能跑到防守底線後方（Y<0）
+        // 這條約束消除鏡像歧義：單根門柱時，Y<0 的對稱粒子群會被淘汰
+        if (p.y < 0.0f) {
+            p.weight *= 1e-6f;
+            continue;
+        }
+
         for (const auto& obs : obs_list) {
             // 將光達測到的門柱，依據這個粒子的「假想姿態」投影到全域地圖
             float gx_pred = p.x + obs.x * cos(p.theta) - obs.y * sin(p.theta);

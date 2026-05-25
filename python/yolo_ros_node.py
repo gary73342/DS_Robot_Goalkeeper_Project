@@ -24,6 +24,7 @@ import os
 import sys
 import numpy as np
 import cv2
+from log import setup_log
 
 from sensor_msgs.msg import Image
 from std_msgs.msg import Float32MultiArray
@@ -444,6 +445,8 @@ class YoloRosNode:
 # ==============================================================================
 
 if __name__ == "__main__":
+    log_path = sys.argv[1] if len(sys.argv) > 1 else None
+    setup_log(log_path, sample_rate=5)
     try:
         node = YoloRosNode()
         node.start()
