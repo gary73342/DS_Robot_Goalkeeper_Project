@@ -22,8 +22,9 @@ EKFLocalizer::EKFLocalizer()
     mahal_gate_ = 5.99f;   // chi-square 2DOF 95%
 
     // 初始狀態與共變異數（未收斂前給大值）
-    mu_    = Vector3f::Zero();
-    sigma_ = Matrix3f::Identity() * 1000.0f;
+    mu_              = Vector3f::Zero();
+    sigma_           = Matrix3f::Identity() * 1000.0f;
+    last_innov_norm_ = 0.0f;
 }
 
 // ==============================================================================
@@ -162,6 +163,8 @@ void EKFLocalizer::update(const std::vector<Observation>& obs_list)
 {
     if (obs_list.empty()) return;
 
+    last_innov_norm_ = 0.0f;
+
     int n_land = static_cast<int>(map_landmarks_.size()); // = 2
     int n_obs  = static_cast<int>(obs_list.size());
 
@@ -214,6 +217,9 @@ void EKFLocalizer::updateOneLandmark(const Observation& obs, const Observation& 
     Vector2f innov;
     innov(0) = obs.x - z_hat(0);
     innov(1) = obs.y - z_hat(1);
+
+    float norm = innov.norm();
+    if (norm > last_innov_norm_) last_innov_norm_ = norm;
 
     mu_    = mu_ + K * innov;
     sigma_ = (Matrix3f::Identity() - K * H) * sigma_;

@@ -175,6 +175,35 @@ float Localizer::getVarianceX() {
     return var;
 }
 
+// 綁架恢復：全域均勻撒粒子，並將粒子數擴充為 n
+void Localizer::reinitForKidnapping(int n) {
+    num_particles = n;
+    particles.resize(n);
+    uniform_real_distribution<float> dist_x(-0.60f, 0.60f);
+    uniform_real_distribution<float> dist_y(-0.3f, 0.8f);
+    uniform_real_distribution<float> dist_theta(-M_PI, M_PI);
+    float w = 1.0f / num_particles;
+    for (auto& p : particles) {
+        p = { dist_x(gen), dist_y(gen), dist_theta(gen), w };
+    }
+}
+
+// 把 PF 收斂到已知姿態附近（小範圍高斯散佈）
+// n > 0 時同時調整粒子數；n = 0 維持現有粒子數
+void Localizer::reinitNearPose(float x, float y, float theta, int n) {
+    if (n > 0) {
+        num_particles = n;
+        particles.resize(n);
+    }
+    normal_distribution<float> dx(x, 0.05f);
+    normal_distribution<float> dy(y, 0.05f);
+    normal_distribution<float> dth(theta, 0.05f);
+    float w = 1.0f / num_particles;
+    for (auto& p : particles) {
+        p = { dx(gen), dy(gen), dth(gen), w };
+    }
+}
+
 // 取得估計值
 void Localizer::getEstimate(float& ex, float& ey, float& et) {
     ex = 0.0f; ey = 0.0f; 

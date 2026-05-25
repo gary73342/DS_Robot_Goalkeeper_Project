@@ -356,8 +356,8 @@ class YoloRosNode:
         把影像存成暫存檔，透過 UDP 送給 yolo_server，取回偵測結果。
         回傳 dict: {"detected": 0/1, "cx": px, "cy": py, "w": w, "h": h, "conf": c}
         """
-        tmp_path       = "/tmp/yolo_frame_tmp.jpg"
-        final_path     = "/tmp/yolo_frame.jpg"
+        tmp_path       = "/dev/shm/yolo_frame_tmp.jpg"
+        final_path     = "/dev/shm/yolo_frame.jpg"
         cv2.imwrite(tmp_path, frame)
         os.replace(tmp_path, final_path)   # 原子操作，避免 server 讀到一半的檔案
 

@@ -48,6 +48,13 @@ public:
 
     // 取得粒子雲在 X 軸的加權方差（判斷定位是否收斂）
     float getVarianceX();
+
+    // 綁架恢復：全域均勻撒粒子，同時將粒子數擴充為 n
+    void reinitForKidnapping(int n);
+
+    // 把 PF 收斂到已知姿態附近（小範圍高斯散佈）
+    // n > 0 時同時縮減粒子數；n = 0 維持現有粒子數
+    void reinitNearPose(float x, float y, float theta, int n = 0);
 };
 
 #endif // LOCALIZATION_H

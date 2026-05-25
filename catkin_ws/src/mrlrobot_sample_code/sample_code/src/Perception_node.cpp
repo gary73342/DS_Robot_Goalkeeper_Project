@@ -100,8 +100,8 @@ int main(int argc, char** argv) {
                     ball_detected  = true;
                     ball_obs       = {seg.local_x, seg.local_y};
                 }
-            } else if (label == 1 && seg.local_y < 0) {
-                // 門柱：Y 負向
+            } else if (label == 1) {
+                // 門柱：不限方向（綁架恢復時機器人可能轉向，門柱會出現在任意 local_y）
                 found_posts.push_back({seg.local_x, seg.local_y});
             }
         }

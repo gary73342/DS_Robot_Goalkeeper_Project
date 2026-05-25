@@ -2,17 +2,19 @@
 //
 // EKF_Localization_node.cpp
 //
-// 功能與 Localization_node.cpp 相同，但定位後端改用 EKF（代替粒子濾波）。
-// 發布 topic 格式與 Localization_node 完全相同，fusion_node 無需修改。
+// 正常情況下使用 EKF 定位（EKF_PRIMARY）。
+// 當 EKF innovation 連續異常高時，判定發生綁架，切換至 PF_RECOVERY：
+//   PF 全域重撒粒子 → 收斂後用幾何解算重置 EKF → 切回 EKF_PRIMARY。
 //
 // 訂閱：
-//   /odom             (nav_msgs/Odometry)       odom 速度，驅動 predict
-//   /posts_local      (Float32MultiArray)        門柱局部座標 [x1,y1,x2,y2,...]
-//   /ball_lidar_local (Float32MultiArray)        球局部座標 [detected, x, y]
+//   /odom             (nav_msgs/Odometry)
+//   /posts_local      (Float32MultiArray)   [x1,y1,x2,y2,...]
+//   /ball_lidar_local (Float32MultiArray)   [detected, x, y]
 //
 // 發布：
-//   /robot_pose       (Float32MultiArray)        [x, y, theta, var_x]
-//   /ball_lidar_world (Float32MultiArray)        [detected, X, Y]（從 EKF 位姿轉換）
+//   /robot_pose       (Float32MultiArray)   [x, y, theta, var_x]
+//   /ball_lidar_world (Float32MultiArray)   [detected, X, Y]
+//   /particle_cloud   (geometry_msgs/PoseArray)   PF 粒子點雲（RViz）
 
 #include <iostream>
 #include <vector>
@@ -22,10 +24,18 @@
 #include <nav_msgs/Odometry.h>
 #include <std_msgs/Float32MultiArray.h>
 #include <tf/transform_broadcaster.h>
+#include <geometry_msgs/PoseArray.h>
+#include <geometry_msgs/Pose.h>
 
 #include "EKF_Localization.h"
+#include "Particle_Filter.h"
 
 using namespace std;
+
+// ==============================================================================
+// 狀態機定義
+// ==============================================================================
+enum class LocState { WAITING, EKF_PRIMARY, PF_RECOVERY };
 
 // ==============================================================================
 // 全域資料（callback 寫入，main loop 讀取）
@@ -69,19 +79,28 @@ int main(int argc, char** argv) {
     ros::Subscriber posts_sub = nh.subscribe<std_msgs::Float32MultiArray>(
         "/posts_local", 1, postsCallback);
 
-    // --- 發布（與 localization_node 完全相同，可直接替換）---
-    ros::Publisher robot_pose_pub = nh.advertise<std_msgs::Float32MultiArray>(
-        "/robot_pose", 1);
-    ros::Publisher ball_world_pub = nh.advertise<std_msgs::Float32MultiArray>(
-        "/ball_lidar_world", 1);
+    // --- 發布 ---
+    ros::Publisher robot_pose_pub     = nh.advertise<std_msgs::Float32MultiArray>("/robot_pose", 1);
+    ros::Publisher ball_world_pub     = nh.advertise<std_msgs::Float32MultiArray>("/ball_lidar_world", 1);
+    ros::Publisher particle_cloud_pub = nh.advertise<geometry_msgs::PoseArray>("/particle_cloud", 1);
 
-    // --- EKF 初始化 ---
+    // --- 定位器初始化 ---
     EKFLocalizer ekf;
+    Localizer    pf(300);
+
+    // --- 狀態機 ---
+    LocState state = LocState::WAITING;
+
+    // ★ 調教區：綁架偵測門限
+    const float INNOV_THRESHOLD = 0.30f;  // 單幀 innovation L2 norm > 此值視為異常
+    const int   KIDNAP_COUNT    = 5;      // 連續 N 幀異常 → 觸發綁架恢復
+    const float PF_CONVERGE_VAR = 0.05f; // PF var_x 低於此值視為重定位成功
+    int kidnap_frames = 0;
 
     // --- TF 廣播器 ---
     static tf::TransformBroadcaster tf_broadcaster;
 
-    // --- 迴圈頻率（與 Localization_node 相同）---
+    // --- 迴圈頻率 ---
     const float loop_hz = 20.0f;
     const float dt      = 1.0f / loop_hz;
     ros::Rate rate(loop_hz);
@@ -101,23 +120,21 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // ------------------------------------------------------------------
-        // 階段 A：Predict（線速度與角速度均來自 odom）
-        // ------------------------------------------------------------------
-        float v = -(latest_odom->twist.twist.linear.x);  // 方向修正同 Localization_node
+        float v = -(latest_odom->twist.twist.linear.x);
         float w = latest_odom->twist.twist.angular.z;
 
-        if (ekf.isInitialized()) {
-            ekf.predict(v, w, dt);
-        }
-
         // ------------------------------------------------------------------
-        // 階段 B：初始化 or Update
+        // WAITING：等待 EKF 幾何初始化
         // ------------------------------------------------------------------
-        if (!ekf.isInitialized()) {
+        if (state == LocState::WAITING) {
             if (latest_posts.size() >= 2) {
                 if (ekf.initFromPosts(latest_posts)) {
-                    ROS_INFO("[EKF] 初始化完成，開始 EKF 定位");
+                    float ex, ey, et;
+                    ekf.getEstimate(ex, ey, et);
+                    pf.reinitNearPose(ex, ey, et);
+                    state = LocState::EKF_PRIMARY;
+                    kidnap_frames = 0;
+                    ROS_INFO("[EKF] 初始化完成，切換至 EKF_PRIMARY");
                 } else {
                     ROS_WARN_THROTTLE(1.0, "[EKF] 幾何解算失敗，重試...");
                 }
@@ -128,22 +145,71 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // 已初始化：EKF update
-        ekf.update(latest_posts);
+        // ------------------------------------------------------------------
+        // Predict
+        // ------------------------------------------------------------------
+        ekf.predict(v, w, dt);
+        pf.predict(v, w, dt);
 
         // ------------------------------------------------------------------
-        // 階段 C：取得估計結果
+        // Update + 綁架偵測（只在 EKF_PRIMARY 偵測）
         // ------------------------------------------------------------------
-        float ex, ey, et;
-        ekf.getEstimate(ex, ey, et);
-        float var_x = ekf.getVarianceX();
+        if (state == LocState::EKF_PRIMARY) {
+            ekf.update(latest_posts);
+            float innov = ekf.getLastInnovation();
 
+            if (innov > INNOV_THRESHOLD) {
+                kidnap_frames++;
+                ROS_WARN_THROTTLE(0.5, "[EKF] 高 innovation=%.3f (%d/%d)",
+                    innov, kidnap_frames, KIDNAP_COUNT);
+            } else {
+                kidnap_frames = 0;
+            }
+
+            if (kidnap_frames >= KIDNAP_COUNT) {
+                pf.reinitForKidnapping(1000);
+                state = LocState::PF_RECOVERY;
+                kidnap_frames = 0;
+                ROS_WARN("[EKF] ★ 偵測到綁架！切換至 PF_RECOVERY");
+            }
+        }
+
+        pf.update(latest_posts);
+
+        // PF 收斂後用幾何解算重置 EKF，切回 EKF_PRIMARY
+        if (state == LocState::PF_RECOVERY) {
+            float pf_var = pf.getVarianceX();
+            if (pf_var < PF_CONVERGE_VAR && latest_posts.size() >= 2) {
+                if (ekf.initFromPosts(latest_posts)) {
+                    float rx, ry, rt;
+                    ekf.getEstimate(rx, ry, rt);
+                    pf.reinitNearPose(rx, ry, rt, 300);
+                    state = LocState::EKF_PRIMARY;
+                    kidnap_frames = 0;
+                    ROS_INFO("[EKF] PF 收斂（var_x=%.4f），重定位成功，切回 EKF_PRIMARY", pf_var);
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // 取得最佳估計（EKF_PRIMARY 用 EKF，PF_RECOVERY 用 PF）
+        // ------------------------------------------------------------------
+        float ex, ey, et, var_x;
+        if (state == LocState::EKF_PRIMARY) {
+            ekf.getEstimate(ex, ey, et);
+            var_x = ekf.getVarianceX();
+        } else {
+            pf.getEstimate(ex, ey, et);
+            var_x = pf.getVarianceX();
+        }
+
+        const char* state_str = (state == LocState::EKF_PRIMARY) ? "EKF" : "PF";
         ROS_INFO_THROTTLE(0.3,
-            "[EKF] Pose X=%.2f Y=%.2f Theta=%.2f var_x=%.4f posts=%zu",
-            ex, ey, et, var_x, latest_posts.size());
+            "[EKF] [%s] Pose X=%.2f Y=%.2f Theta=%.2f var_x=%.4f posts=%zu",
+            state_str, ex, ey, et, var_x, latest_posts.size());
 
         // ------------------------------------------------------------------
-        // 階段 D：發布機器人全域姿態
+        // 發布機器人全域姿態
         // ------------------------------------------------------------------
         {
             std_msgs::Float32MultiArray pose_msg;
@@ -152,7 +218,7 @@ int main(int argc, char** argv) {
         }
 
         // ------------------------------------------------------------------
-        // 階段 E：球局部座標 → 全域座標
+        // 球局部座標 → 全域座標
         // ------------------------------------------------------------------
         {
             std_msgs::Float32MultiArray ball_msg;
@@ -171,7 +237,30 @@ int main(int argc, char** argv) {
         }
 
         // ------------------------------------------------------------------
-        // 階段 F：TF 廣播（map → odom → base_link）
+        // PF 粒子點雲（RViz 視覺化，PF_RECOVERY 時方便觀察收斂狀況）
+        // ------------------------------------------------------------------
+        {
+            geometry_msgs::PoseArray cloud_msg;
+            cloud_msg.header.stamp    = ros::Time::now();
+            cloud_msg.header.frame_id = "map";
+            for (const auto& p : pf.getParticles()) {
+                geometry_msgs::Pose pose;
+                pose.position.x = p.x;
+                pose.position.y = p.y;
+                pose.position.z = 0.0;
+                tf::Quaternion q;
+                q.setRPY(0, 0, p.theta);
+                pose.orientation.x = q.x();
+                pose.orientation.y = q.y();
+                pose.orientation.z = q.z();
+                pose.orientation.w = q.w();
+                cloud_msg.poses.push_back(pose);
+            }
+            particle_cloud_pub.publish(cloud_msg);
+        }
+
+        // ------------------------------------------------------------------
+        // TF 廣播（map → odom → base_link）
         // ------------------------------------------------------------------
         {
             float odom_x = latest_odom->pose.pose.position.x;

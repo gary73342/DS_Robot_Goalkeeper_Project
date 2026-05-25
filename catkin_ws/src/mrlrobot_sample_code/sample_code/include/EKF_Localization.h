@@ -33,6 +33,9 @@ public:
     // 取得 X 軸方差（供 fusion_node 判斷定位是否收斂）
     float getVarianceX() const;
 
+    // 取得上一次 update 的最大 innovation L2 norm（供外部判斷綁架）
+    float getLastInnovation() const { return last_innov_norm_; }
+
     bool isInitialized() const { return initialized_; }
 
 private:
@@ -47,10 +50,11 @@ private:
     std::vector<Observation> map_landmarks_;
 
     // --- 雜訊參數（在建構子中設定）---
-    float noise_v_;     // 線速度雜訊標準差 (m/s)
-    float noise_w_;     // 角速度雜訊標準差 (rad/s)
-    float noise_obs_;   // 觀測雜訊標準差 (m)
-    float mahal_gate_;  // Mahalanobis gate 閾值（chi-square 2DOF 95% = 5.99）
+    float noise_v_;          // 線速度雜訊標準差 (m/s)
+    float noise_w_;          // 角速度雜訊標準差 (rad/s)
+    float noise_obs_;        // 觀測雜訊標準差 (m)
+    float mahal_gate_;       // Mahalanobis gate 閾值（chi-square 2DOF 95% = 5.99）
+    float last_innov_norm_;  // 上次 update 的最大 innovation L2 norm
 
     // 幾何解算（輔助 initFromPosts）
     // obs_a / obs_b：兩觀測；land_a / land_b：對應的全域門柱
