@@ -115,7 +115,7 @@ int main(int argc, char** argv) {
             std_msgs::Float32MultiArray ball_msg;
             if (ball_detected) {
                 ball_msg.data = {1.0f, ball_obs.x, ball_obs.y};
-                ROS_INFO_THROTTLE(0.5, "[Perception] Ball: x=%.2f y=%.2f dist=%.2f m",
+                ROS_INFO_THROTTLE(0.3, "[Perception] Ball: x=%.2f y=%.2f dist=%.2f m",
                                   ball_obs.x, ball_obs.y, min_ball_dist);
             } else {
                 ball_msg.data = {0.0f, 0.0f, 0.0f};
@@ -123,19 +123,52 @@ int main(int argc, char** argv) {
             ball_local_pub.publish(ball_msg);
         }
 
-        // 門柱的局部座標（打平成一維陣列：x1,y1,x2,y2,...）
+        // 門柱過濾：從所有偵測到的門柱中選間距最接近 0.9m 的一對發布
+        // 避免機器人的腳被誤判為門柱時 EKF 收到錯誤觀測
+        const float GOAL_WIDTH = 0.9f;
+        const float GATE_DIST  = 0.15f;
+
+        vector<Observation> valid_posts;
+        if (found_posts.size() >= 2) {
+            int   best_i = -1, best_j = -1;
+            float best_err = 1e6f;
+            for (size_t i = 0; i < found_posts.size(); ++i) {
+                for (size_t j = i + 1; j < found_posts.size(); ++j) {
+                    float dx  = found_posts[i].x - found_posts[j].x;
+                    float dy  = found_posts[i].y - found_posts[j].y;
+                    float err = fabs(hypot(dx, dy) - GOAL_WIDTH);
+                    if (err < best_err) {
+                        best_err = err;
+                        best_i   = static_cast<int>(i);
+                        best_j   = static_cast<int>(j);
+                    }
+                }
+            }
+            if (best_err <= GATE_DIST) {
+                valid_posts.push_back(found_posts[best_i]);
+                valid_posts.push_back(found_posts[best_j]);
+            }
+        } else {
+            valid_posts = found_posts;  // 0 或 1 根：維持現有行為
+        }
+
+        // 發布門柱局部座標（打平成一維陣列：x1,y1,x2,y2,...）
         {
             std_msgs::Float32MultiArray posts_msg;
-            for (const auto& p : found_posts) {
+            for (const auto& p : valid_posts) {
                 posts_msg.data.push_back(p.x);
                 posts_msg.data.push_back(p.y);
             }
             posts_pub.publish(posts_msg);
 
-            for (size_t i = 0; i < found_posts.size(); ++i) {
-                ROS_INFO_THROTTLE(0.5, "[Perception] Post %zu: x=%.2f y=%.2f dist=%.2f m",
-                    i + 1, found_posts[i].x, found_posts[i].y,
-                    hypot(found_posts[i].x, found_posts[i].y));
+            for (size_t i = 0; i < valid_posts.size(); ++i) {
+                ROS_INFO_THROTTLE(0.3, "[Perception] Post %zu: x=%.2f y=%.2f dist=%.2f m",
+                    i + 1, valid_posts[i].x, valid_posts[i].y,
+                    hypot(valid_posts[i].x, valid_posts[i].y));
+            }
+            if (found_posts.size() >= 2 && valid_posts.size() < 2) {
+                ROS_WARN_THROTTLE(0.5, "[Perception] Posts filtered out: %zu detected, no pair within %.2fm of goal width",
+                    found_posts.size(), GATE_DIST);
             }
         }
 
@@ -172,7 +205,7 @@ int main(int argc, char** argv) {
             marker_pub.publish(del);
         }
 
-        // 門柱（藍色圓柱）
+        // 門柱（藍色圓柱，只顯示通過過濾的門柱對）
         for (size_t i = 0; i < 2; ++i) {
             visualization_msgs::Marker post_marker;
             post_marker.header.frame_id = latest_scan->header.frame_id;
@@ -181,10 +214,10 @@ int main(int argc, char** argv) {
             post_marker.id              = static_cast<int>(i);
             post_marker.type            = visualization_msgs::Marker::CYLINDER;
 
-            if (i < found_posts.size()) {
+            if (i < valid_posts.size()) {
                 post_marker.action          = visualization_msgs::Marker::ADD;
-                post_marker.pose.position.x = found_posts[i].x;
-                post_marker.pose.position.y = found_posts[i].y;
+                post_marker.pose.position.x = valid_posts[i].x;
+                post_marker.pose.position.y = valid_posts[i].y;
                 post_marker.pose.position.z = 0.0f;
                 post_marker.scale.x         = 0.08f;
                 post_marker.scale.y         = 0.08f;

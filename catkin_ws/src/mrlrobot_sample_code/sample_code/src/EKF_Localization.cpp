@@ -18,7 +18,7 @@ EKFLocalizer::EKFLocalizer()
     // 雜訊參數（與 Particle_Filter.cpp 保持相同數量級）
     noise_v_    = 0.04f;   // 線速度標準差 (m/s)
     noise_w_    = 0.10f;   // 角速度標準差 (rad/s)
-    noise_obs_  = 0.10f;   // 門柱觀測距離標準差 (m)
+    noise_obs_  = 0.20f;   // 門柱觀測距離標準差 (m)，實際光達誤差約 ±0.15m
     mahal_gate_ = 5.99f;   // chi-square 2DOF 95%
 
     // 初始狀態與共變異數（未收斂前給大值）
@@ -50,7 +50,7 @@ bool EKFLocalizer::initFromPosts(const std::vector<Observation>& obs_list)
     // Assignment A：obs[0] → 左柱，obs[1] → 右柱
     if (solveGeometric(o0, lL, o1, lR, rx, ry, rt) && isValid(rx, ry)) {
         mu_ << rx, ry, rt;
-        sigma_ = Matrix3f::Identity() * 0.05f; // 幾何解算精度高，初始給小值
+        sigma_ = Matrix3f::Identity() * 0.30f; // 幾何解算後仍有光達雜訊，不宜過小
         initialized_ = true;
         std::cout << "[EKF] 幾何初始化成功 (A→L,B→R): X=" << rx
                   << " Y=" << ry << " θ=" << rt << std::endl;
@@ -60,7 +60,7 @@ bool EKFLocalizer::initFromPosts(const std::vector<Observation>& obs_list)
     // Assignment B：obs[0] → 右柱，obs[1] → 左柱
     if (solveGeometric(o0, lR, o1, lL, rx, ry, rt) && isValid(rx, ry)) {
         mu_ << rx, ry, rt;
-        sigma_ = Matrix3f::Identity() * 0.05f;
+        sigma_ = Matrix3f::Identity() * 0.30f;
         initialized_ = true;
         std::cout << "[EKF] 幾何初始化成功 (A→R,B→L): X=" << rx
                   << " Y=" << ry << " θ=" << rt << std::endl;

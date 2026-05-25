@@ -11,7 +11,7 @@
 //   /ball_lidar_local (Float32MultiArray)        球局部座標 [detected, x, y]
 //
 // 發布：
-//   /robot_pose_ekf   (Float32MultiArray)        [x, y, theta, var_x]
+//   /robot_pose       (Float32MultiArray)        [x, y, theta, var_x]
 //   /ball_lidar_world (Float32MultiArray)        [detected, X, Y]（從 EKF 位姿轉換）
 
 #include <iostream>
@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
     ros::init(argc, argv, "ekf_localization_node");
     ros::NodeHandle nh;
 
-    // --- 訂閱（與 Localization_node 完全相同）---
+    // --- 訂閱 ---
     ros::Subscriber odom_sub  = nh.subscribe<nav_msgs::Odometry>(
         "/odom", 1, odomCallback);
     ros::Subscriber ball_sub  = nh.subscribe<std_msgs::Float32MultiArray>(
@@ -102,10 +102,10 @@ int main(int argc, char** argv) {
         }
 
         // ------------------------------------------------------------------
-        // 階段 A：Predict（odom 驅動）
+        // 階段 A：Predict（線速度與角速度均來自 odom）
         // ------------------------------------------------------------------
         float v = -(latest_odom->twist.twist.linear.x);  // 方向修正同 Localization_node
-        float w =   latest_odom->twist.twist.angular.z;
+        float w = latest_odom->twist.twist.angular.z;
 
         if (ekf.isInitialized()) {
             ekf.predict(v, w, dt);
@@ -115,7 +115,6 @@ int main(int argc, char** argv) {
         // 階段 B：初始化 or Update
         // ------------------------------------------------------------------
         if (!ekf.isInitialized()) {
-            // 尚未初始化：等待兩根門柱同時出現，做幾何直接解算
             if (latest_posts.size() >= 2) {
                 if (ekf.initFromPosts(latest_posts)) {
                     ROS_INFO("[EKF] 初始化完成，開始 EKF 定位");
@@ -139,12 +138,12 @@ int main(int argc, char** argv) {
         ekf.getEstimate(ex, ey, et);
         float var_x = ekf.getVarianceX();
 
-        ROS_INFO_THROTTLE(0.5,
+        ROS_INFO_THROTTLE(0.3,
             "[EKF] Pose X=%.2f Y=%.2f Theta=%.2f var_x=%.4f posts=%zu",
             ex, ey, et, var_x, latest_posts.size());
 
         // ------------------------------------------------------------------
-        // 階段 D：發布機器人全域姿態（格式與 Localization_node 相同）
+        // 階段 D：發布機器人全域姿態
         // ------------------------------------------------------------------
         {
             std_msgs::Float32MultiArray pose_msg;
@@ -163,7 +162,7 @@ int main(int argc, char** argv) {
                 float ball_global_y = ey + ball_local_x * std::sin(et)
                                          + ball_local_y * std::cos(et);
                 ball_msg.data = {1.0f, ball_global_x, ball_global_y};
-                ROS_INFO_THROTTLE(0.5, "[EKF] Ball world X=%.2f Y=%.2f",
+                ROS_INFO_THROTTLE(0.3, "[EKF] Ball world X=%.2f Y=%.2f",
                                   ball_global_x, ball_global_y);
             } else {
                 ball_msg.data = {0.0f, 0.0f, 0.0f};
@@ -186,7 +185,6 @@ int main(int argc, char** argv) {
             double roll, pitch, odom_yaw;
             tf::Matrix3x3(odom_q).getRPY(roll, pitch, odom_yaw);
 
-            // map → odom：EKF 修正量
             float cx = ex - odom_x;
             float cy = ey - odom_y;
             float ct = et - static_cast<float>(odom_yaw);
@@ -199,7 +197,6 @@ int main(int argc, char** argv) {
             tf_broadcaster.sendTransform(
                 tf::StampedTransform(map_to_odom, ros::Time::now(), "map", "odom"));
 
-            // odom → base_link
             tf::Transform odom_to_base;
             odom_to_base.setOrigin(tf::Vector3(odom_x, odom_y, 0.0));
             tf::Quaternion q_odom;

@@ -67,9 +67,17 @@ MAX_SPEED        = 0.22   # 最大線速度（m/s）
 MIN_SPEED        = 0.08   # 最小啟動速度（m/s）
 STOP_THRESHOLD   = 0.02   # 死區：誤差小於此值停止（m）
 
-KP_ANGULAR       = 2.0    # 角度修正 P-Control 增益（加大以克服機械偏差）
+KP_ANGULAR        = 2.0   # 角度修正 P-Control 增益（加大以克服機械偏差）
 MAX_ANGULAR_SPEED = 0.5   # 最大旋轉速度（rad/s）
-THETA_DEAD_ZONE  = 0.03   # 角度死區（rad，約 1.7°），低於此值不修正
+THETA_DEAD_ZONE   = 0.03  # 角度死區（rad，約 1.7°），低於此值不修正
+
+# Y 軸漂移修正
+# 往 +X（current_speed > 0）→ theta_target 正 → case 1 → +Y
+# 往 -X（current_speed < 0）→ theta_target 負 → case 4 → +Y
+# 調教：穩定後 robot_y 若低於 0.45 → 調大 KP_Y_CORRECTION；高於 0.55 → 調小
+Y_CORRECTION_THRESHOLD = 0.05  # Y 偏差超過此值才啟動校正 (m)
+KP_Y_CORRECTION        = 1.5   # theta 目標增益
+Y_CORRECTION_MAX       = 0.12  # theta 目標上限 (rad ≈ 6.9°)
 
 # 速度 Ramp（緩慢起步 / 煞車）
 PATROL_MAX_SPEED = 0.20   # 巡邏最大速度（m/s）
@@ -544,10 +552,20 @@ class FusionNode:
 
 
     def _theta_correction(self):
-        """根據當前 theta 計算角度修正速度，讓機器人保持正面朝向"""
-        if abs(self.robot_theta) < THETA_DEAD_ZONE:
+        theta_target = 0.0
+        if self.is_localized and abs(self.current_speed) > 0.01:
+            y_error = DEFENSE_LINE_Y - self.robot_y
+            if abs(y_error) > Y_CORRECTION_THRESHOLD:
+                # 往 +X（current_speed > 0）→ theta 正；往 -X → theta 負
+                direction_sign = 1 if self.current_speed > 0 else -1
+                theta_target = float(np.clip(
+                    direction_sign * KP_Y_CORRECTION * y_error,
+                    -Y_CORRECTION_MAX, Y_CORRECTION_MAX))
+
+        theta_error = self.robot_theta - theta_target
+        if abs(theta_error) < THETA_DEAD_ZONE:
             return 0.0
-        angular = -KP_ANGULAR * self.robot_theta
+        angular = -KP_ANGULAR * theta_error
         return float(np.clip(angular, -MAX_ANGULAR_SPEED, MAX_ANGULAR_SPEED))
 
     def _stop_robot(self):
