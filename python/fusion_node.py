@@ -88,8 +88,15 @@ MAX_DECEL        = 1.2    # 減速度上限（m/s²）—— 煞車稍快但不�
 LOST_TIMEOUT      = 0.5   # 秒：進入 LOST 模式（回巡邏），EKF 繼續預測
 EKF_RESET_TIMEOUT = 1.5   # 秒：球真的消失才 reset EKF，清除速度記憶
 
-# 定位收斂門檻：粒子雲 X 軸方差低於此值時視為收斂，切換至絕對位置控制
+# 定位收斂門檻：EKF X 軸方差低於此值時視為收斂，切換至絕對位置控制
 LOCALIZED_VAR_THRESHOLD = 0.02   # 對應標準差約 0.14m
+
+# 綁架恢復（SETTLE→SPIN→RETURN→HALT）
+KIDNAP_SPIN_SPEED   = 0.4    # SPIN 慢速原地旋轉角速度（rad/s）
+KIDNAP_RETURN_SPEED = 0.15   # RETURN 弧線前進速度（m/s，cmd.linear.x 正值 = 沿車頭前進）
+RETURN_GOAL_X       = 0.0    # RETURN 導航目標 X（場地中心，保證走到看得到兩柱）
+RETURN_GOAL_Y       = DEFENSE_LINE_Y  # 目標 Y（不強制精確，巡邏線附近即可）
+RETURN_GOAL_REACHED = 0.10   # 距目標小於此值不再前進（m）
 
 # 未收斂時的 odom 相對巡邏範圍（±公尺，從啟動點算起）
 PATROL_RELATIVE_RANGE   = 0.2
@@ -263,6 +270,10 @@ class FusionNode:
         # 定位收斂狀態
         self.is_localized = False
 
+        # 綁架恢復狀態（由 /robot_pose[4] 決定）
+        self.is_kidnap_recovery = False
+        self.recovery_sub = 0   # 0=SETTLE,1=SPIN,2=RETURN,3=HALT（由 /robot_pose[5] 決定）
+
         # odom 追蹤（未收斂時用相對位移巡邏）
         self.odom_x = 0.0
         self.odom_x_origin = None   # 第一筆 odom 到來時記錄
@@ -337,6 +348,11 @@ class FusionNode:
             if var_x < LOCALIZED_VAR_THRESHOLD:
                 self.is_localized = True
                 rospy.logwarn("[Fusion] 定位收斂！var_x=%.4f → 切換至絕對位置控制", var_x)
+
+        if len(msg.data) >= 5:
+            self.is_kidnap_recovery = (msg.data[4] > 0.5)
+        if len(msg.data) >= 6:
+            self.recovery_sub = int(msg.data[5] + 0.5)
 
     # ------------------------------------------------------------------
     # 相機 callback（~30Hz）
@@ -518,6 +534,11 @@ class FusionNode:
             target_x, self.robot_x, speed)
     '''
     def _publish_control(self):
+        # KIDNAP_RECOVERY 期間：交給恢復控制
+        if self.is_kidnap_recovery:
+            self._do_recovery_control()
+            return
+
         state = self.ekf.get_state()
         bx, by, vx, vy = state
 
@@ -568,6 +589,54 @@ class FusionNode:
         angular = -KP_ANGULAR * theta_error
         return float(np.clip(angular, -MAX_ANGULAR_SPEED, MAX_ANGULAR_SPEED))
 
+    def _do_recovery_control(self):
+        """
+        KIDNAP_RECOVERY 恢復控制：依子狀態 recovery_sub 分派動作。
+          0=SETTLE（停住等落地）  1=SPIN（慢速原地旋轉）
+          2=RETURN（弧線導航回場） 3=HALT（停住）
+        """
+        self.current_speed  = 0.0
+        self.ramp_last_time = None
+        cmd = Twist()
+
+        if self.recovery_sub == 1:    # SPIN：慢速原地旋轉找柱（全程 0 平移）
+            cmd.linear.x  = 0.0
+            cmd.angular.z = KIDNAP_SPIN_SPEED
+            rospy.logwarn_throttle(1.0, "[Fusion] RECOVERY SPIN — 慢速旋轉搜尋球柱")
+
+        elif self.recovery_sub == 2:  # RETURN：go-to-goal 弧線導航朝 (0, ~0.5)
+            dx = RETURN_GOAL_X - self.robot_x
+            dy = RETURN_GOAL_Y - self.robot_y
+            dist = math.hypot(dx, dy)
+
+            desired_heading = math.atan2(dy, dx)
+            heading_err = desired_heading - self.robot_theta
+            while heading_err >  math.pi: heading_err -= 2.0 * math.pi
+            while heading_err < -math.pi: heading_err += 2.0 * math.pi
+
+            # 角速度：同 _theta_correction 慣例（cmd.angular.z = KP·(目標朝向 − 當前朝向)）
+            cmd.angular.z = float(np.clip(KP_ANGULAR * heading_err,
+                                          -MAX_ANGULAR_SPEED, MAX_ANGULAR_SPEED))
+
+            # 前進速度：邊走邊修，未對準目標時自動放慢（cos 加權），到目標附近停止前進
+            if dist < RETURN_GOAL_REACHED:
+                cmd.linear.x = 0.0
+            else:
+                cmd.linear.x = KIDNAP_RETURN_SPEED * max(0.0, math.cos(heading_err))
+
+            rospy.logwarn_throttle(1.0,
+                "[Fusion] RECOVERY RETURN — 機(%.2f,%.2f,θ%.2f)→(0,%.2f) dist=%.2f v=%.2f w=%.2f",
+                self.robot_x, self.robot_y, self.robot_theta,
+                RETURN_GOAL_Y, dist, cmd.linear.x, cmd.angular.z)
+
+        else:                          # SETTLE(0) / HALT(3)：停住
+            cmd.linear.x  = 0.0
+            cmd.angular.z = 0.0
+            label = "SETTLE 落地等待" if self.recovery_sub == 0 else "HALT 停止"
+            rospy.logwarn_throttle(1.0, "[Fusion] RECOVERY %s — 停住", label)
+
+        self.pub_vel.publish(cmd)
+
     def _stop_robot(self):
         self.current_speed  = 0.0   # 清除 ramp 狀態，下次起步重新累加
         self.ramp_last_time = None
@@ -580,9 +649,14 @@ class FusionNode:
         攔截模式時由 camera/lidar callback 發出指令，這裡不干涉。
 
         定位未收斂：用 odom 相對位移巡邏（±PATROL_RELATIVE_RANGE），
-                    不依賴可能錯誤的粒子濾波輸出。
+                    不依賴可能錯誤的 EKF 輸出。
         定位已收斂：改用絕對位置（robot_x），在 FIELD_X_MIN ~ FIELD_X_MAX 之間巡邏。
         """
+        # KIDNAP_RECOVERY 期間：交給恢復控制
+        if self.is_kidnap_recovery:
+            self._do_recovery_control()
+            return
+
         if not self.is_lost:
             return
 

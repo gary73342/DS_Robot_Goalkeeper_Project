@@ -1,0 +1,41 @@
+<launch>
+
+  <!-- Gazebo 用的 URDF（含插件），原本 minibot.urdf 不動 -->
+  <param name="robot_description"
+         textfile="$(find minibot_description)/urdf/minibot_gazebo.urdf"/>
+
+  <!-- use_sim_time：所有節點使用 Gazebo 模擬時鐘 -->
+  <param name="use_sim_time" value="true"/>
+
+  <!-- 啟動 Gazebo，載入球場 world -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name"   value="$(find sample_code)/worlds/goalkeeper.world"/>
+    <arg name="paused"       value="false"/>
+    <arg name="use_sim_time" value="true"/>
+    <arg name="gui"          value="true"/>
+    <arg name="headless"     value="false"/>
+    <arg name="debug"        value="false"/>
+  </include>
+
+  <!-- 生成機器人：原點 (0, 0.5, 0)，朝向 global -X（yaw = π） -->
+  <node name="spawn_minibot" pkg="gazebo_ros" type="spawn_model"
+        args="-urdf -model minibot
+              -x 0 -y 0.5 -z 0.001
+              -R 0 -P 0 -Y 3.14159265
+              -param robot_description"
+        output="screen"/>
+
+  <!-- TF publisher -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher"
+        type="robot_state_publisher" output="screen">
+    <param name="publish_frequency" value="50.0"/>
+    <param name="publish_fixed_joints" value="true"/>
+    <param name="use_tf_static" value="false"/>
+  </node>
+
+  <!-- RViz（沿用現有設定檔） -->
+  <node name="rviz" pkg="rviz" type="rviz"
+        args="-d $(find sample_code)/rviz/goalkeeper.rviz"
+        required="false" output="screen"/>
+
+</launch>

@@ -8,6 +8,7 @@
 #include <ros/package.h>
 #include <visualization_msgs/Marker.h>
 #include <std_msgs/Float32MultiArray.h>
+#include <clocale>
 
 #include "Random_Forest.h"
 #include "FeatureExtractor.h"
@@ -31,6 +32,7 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& msg) {
 int main(int argc, char** argv) {
 
     ros::init(argc, argv, "perception_node");
+    setlocale(LC_ALL, "");
     ros::NodeHandle nh;
 
     // --- 訂閱 ---

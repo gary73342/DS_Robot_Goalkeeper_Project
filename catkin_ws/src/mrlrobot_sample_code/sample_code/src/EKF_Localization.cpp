@@ -12,18 +12,26 @@ using namespace Eigen;
 EKFLocalizer::EKFLocalizer()
     : initialized_(false)
 {
-    // 全域地圖：兩根球門柱的世界座標
     map_landmarks_ = { {-0.45f, 0.0f}, {0.45f, 0.0f} };
-
-    // 雜訊參數（與 Particle_Filter.cpp 保持相同數量級）
-    noise_v_    = 0.04f;   // 線速度標準差 (m/s)
-    noise_w_    = 0.10f;   // 角速度標準差 (rad/s)
-    noise_obs_  = 0.20f;   // 門柱觀測距離標準差 (m)，實際光達誤差約 ±0.15m
-    mahal_gate_ = 5.99f;   // chi-square 2DOF 95%
-
-    // 初始狀態與共變異數（未收斂前給大值）
+    noise_v_    = 0.04f;
+    noise_w_    = 0.10f;
+    noise_obs_  = 0.20f;
+    mahal_gate_ = 5.99f;
     mu_              = Vector3f::Zero();
     sigma_           = Matrix3f::Identity() * 1000.0f;
+    last_innov_norm_ = 0.0f;
+}
+
+EKFLocalizer::EKFLocalizer(float x, float y, float theta)
+    : initialized_(true)
+{
+    map_landmarks_ = { {-0.45f, 0.0f}, {0.45f, 0.0f} };
+    noise_v_    = 0.04f;
+    noise_w_    = 0.10f;
+    noise_obs_  = 0.20f;
+    mahal_gate_ = 5.99f;
+    mu_ << x, y, normalizeAngle(theta);
+    sigma_           = Matrix3f::Identity() * 0.50f;
     last_innov_norm_ = 0.0f;
 }
 

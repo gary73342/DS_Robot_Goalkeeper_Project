@@ -1,0 +1,209 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="goalkeeper">
+
+    <include><uri>model://ground_plane</uri></include>
+    <include><uri>model://sun</uri></include>
+
+    <physics type="ode">
+      <real_time_update_rate>1000.0</real_time_update_rate>
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>
+
+    <!-- ============================================================ -->
+    <!-- 球門柱  (X=±0.45, Y=0)                                       -->
+    <!-- ============================================================ -->
+    <model name="post_left">
+      <static>true</static>
+      <pose>-0.45 0 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="col">
+          <geometry><cylinder><radius>0.04</radius><length>0.5</length></cylinder></geometry>
+        </collision>
+        <visual name="vis">
+          <geometry><cylinder><radius>0.04</radius><length>0.5</length></cylinder></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="post_right">
+      <static>true</static>
+      <pose>0.45 0 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="col">
+          <geometry><cylinder><radius>0.04</radius><length>0.5</length></cylinder></geometry>
+        </collision>
+        <visual name="vis">
+          <geometry><cylinder><radius>0.04</radius><length>0.5</length></cylinder></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============================================================ -->
+    <!-- 球  (初始位置 X=0, Y=1.5)                                    -->
+    <!-- ============================================================ -->
+    <model name="ball">
+      <pose>0 1.5 0.11 0 0 0</pose>
+      <link name="link">
+        <inertial>
+          <mass>0.43</mass>
+          <inertia>
+            <ixx>0.00212</ixx><ixy>0</ixy><ixz>0</ixz>
+            <iyy>0.00212</iyy><iyz>0</iyz>
+            <izz>0.00212</izz>
+          </inertia>
+        </inertial>
+        <collision name="col">
+          <geometry><sphere><radius>0.11</radius></sphere></geometry>
+          <surface>
+            <friction><ode><mu>0.5</mu><mu2>0.5</mu2></ode></friction>
+            <bounce><restitution_coefficient>0.3</restitution_coefficient></bounce>
+          </surface>
+        </collision>
+        <visual name="vis">
+          <geometry><sphere><radius>0.11</radius></sphere></geometry>
+          <material>
+            <ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============================================================ -->
+    <!-- 外牆（有碰撞，LiDAR 看得到），場地邊界外 0.5m               -->
+    <!-- 牆高 0.5m，中心 Z=0.25m                                      -->
+    <!-- ============================================================ -->
+
+    <!-- 左牆  X=-1.5m，Y=-0.5~4.0，長=4.5m -->
+    <model name="wall_left">
+      <static>true</static>
+      <pose>-1.5 1.75 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="col">
+          <geometry><box><size>0.05 4.5 0.5</size></box></geometry>
+        </collision>
+        <visual name="vis">
+          <geometry><box><size>0.05 4.5 0.5</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>0.6 0.6 0.6 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 右牆  X=+1.5m -->
+    <model name="wall_right">
+      <static>true</static>
+      <pose>1.5 1.75 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="col">
+          <geometry><box><size>0.05 4.5 0.5</size></box></geometry>
+        </collision>
+        <visual name="vis">
+          <geometry><box><size>0.05 4.5 0.5</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>0.6 0.6 0.6 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 後牆（球門後方）Y=-0.5m，X=-1.5~+1.5，長=3.0m -->
+    <model name="wall_back">
+      <static>true</static>
+      <pose>0 -0.5 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="col">
+          <geometry><box><size>3.0 0.05 0.5</size></box></geometry>
+        </collision>
+        <visual name="vis">
+          <geometry><box><size>3.0 0.05 0.5</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>0.6 0.6 0.6 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 遠端牆  Y=4.0m -->
+    <model name="wall_far">
+      <static>true</static>
+      <pose>0 4.0 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="col">
+          <geometry><box><size>3.0 0.05 0.5</size></box></geometry>
+        </collision>
+        <visual name="vis">
+          <geometry><box><size>3.0 0.05 0.5</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient><diffuse>0.6 0.6 0.6 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============================================================ -->
+    <!-- 場地邊界標記（視覺用，無碰撞，高度 0.001m）                  -->
+    <!-- ============================================================ -->
+
+    <!-- 場地左邊界  X=-1.0m -->
+    <model name="mark_field_left">
+      <static>true</static>
+      <pose>-1.0 1.75 0.001 0 0 0</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.02 3.5 0.002</size></box></geometry>
+          <material><ambient>1 1 0 1</ambient><diffuse>1 1 0 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 場地右邊界  X=+1.0m -->
+    <model name="mark_field_right">
+      <static>true</static>
+      <pose>1.0 1.75 0.001 0 0 0</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>0.02 3.5 0.002</size></box></geometry>
+          <material><ambient>1 1 0 1</ambient><diffuse>1 1 0 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 場地遠端邊界  Y=3.5m -->
+    <model name="mark_field_far">
+      <static>true</static>
+      <pose>0 3.5 0.001 0 0 0</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>2.0 0.02 0.002</size></box></geometry>
+          <material><ambient>1 1 0 1</ambient><diffuse>1 1 0 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 球門線  Y=0m -->
+    <model name="mark_goal_line">
+      <static>true</static>
+      <pose>0 0 0.001 0 0 0</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>2.0 0.02 0.002</size></box></geometry>
+          <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 機器人守門線  Y=0.5m -->
+    <model name="mark_defense_line">
+      <static>true</static>
+      <pose>0 0.5 0.001 0 0 0</pose>
+      <link name="link">
+        <visual name="vis">
+          <geometry><box><size>2.0 0.02 0.002</size></box></geometry>
+          <material><ambient>0 0.8 1 1</ambient><diffuse>0 0.8 1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

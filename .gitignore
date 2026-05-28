@@ -8,12 +8,13 @@ catkin_ws/src/CMakeLists.txt
 
 # 大型資料檔案
 Robot_Goalkeeper.v1i.yolov8/
-data/laser_data/
-data/camera_data/
-data/images_dataset/
+data/
 *.bag
 *.mat
 *.dat
+
+# Log 檔案
+logs/
 
 # 模型權重檔
 *.pt

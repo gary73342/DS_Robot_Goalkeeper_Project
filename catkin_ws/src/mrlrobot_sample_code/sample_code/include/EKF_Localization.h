@@ -16,6 +16,7 @@
 class EKFLocalizer {
 public:
     EKFLocalizer();
+    EKFLocalizer(float x, float y, float theta);  // 從已知姿態初始化
 
     // 從兩根門柱觀測幾何直接求解初始姿態
     // 兩根柱都看到才呼叫，回傳是否成功
@@ -37,6 +38,7 @@ public:
     float getLastInnovation() const { return last_innov_norm_; }
 
     bool isInitialized() const { return initialized_; }
+
 
 private:
     // 狀態均值 [x, y, θ]

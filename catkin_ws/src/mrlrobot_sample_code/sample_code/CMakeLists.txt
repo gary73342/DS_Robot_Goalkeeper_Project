@@ -35,11 +35,11 @@ target_link_libraries(perception_node
   ${catkin_LIBRARIES}
 )
 
-# 3b. ekf_localization_node：定位 + TF 廣播（EKF 主力 + PF 綁架恢復）
+# 3b. ekf_localization_node：定位 + TF 廣播（EKF 主力 + KidnapRecovery 綁架恢復）
 add_executable(ekf_localization_node
   src/EKF_Localization_node.cpp
   src/EKF_Localization.cpp
-  src/Particle_Filter.cpp
+  src/KidnapRecovery.cpp
 )
 target_link_libraries(ekf_localization_node
   ${catkin_LIBRARIES}
