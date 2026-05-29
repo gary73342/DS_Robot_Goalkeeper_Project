@@ -33,6 +33,7 @@
 #include <ros/ros.h>
 #include <nav_msgs/Odometry.h>
 #include <std_msgs/Float32MultiArray.h>
+#include <std_msgs/Bool.h>
 #include <std_msgs/ColorRGBA.h>
 #include <tf/transform_broadcaster.h>
 #include <geometry_msgs/Point.h>
@@ -66,6 +67,11 @@ void ballLocalCallback(const std_msgs::Float32MultiArray::ConstPtr& msg) {
     ball_local_y        = msg->data[2];
 }
 
+bool interception_done_flag = false;
+void interceptionDoneCallback(const std_msgs::Bool::ConstPtr& msg) {
+    if (msg->data) interception_done_flag = true;
+}
+
 vector<Observation> latest_posts;
 void postsCallback(const std_msgs::Float32MultiArray::ConstPtr& msg) {
     latest_posts.clear();
@@ -90,6 +96,8 @@ int main(int argc, char** argv)
         "/ball_lidar_local", 1, ballLocalCallback);
     ros::Subscriber posts_sub = nh.subscribe<std_msgs::Float32MultiArray>(
         "/posts_local", 1, postsCallback);
+    ros::Subscriber intercept_sub = nh.subscribe<std_msgs::Bool>(
+        "/interception_done", 1, interceptionDoneCallback);
 
     // --- 發布 ---
     ros::Publisher robot_pose_pub = nh.advertise<std_msgs::Float32MultiArray>("/robot_pose", 1);
@@ -112,6 +120,7 @@ int main(int argc, char** argv)
     const int   POSTS_LOW_THRESH      = 40;
     const float GOODX_VAR_THRESH      = 0.05f;  // var_x 低於此值才更新 last_good_x（可信）
     const float SETTLE_DURATION       = 5.0f;   // SETTLE 落地等待（秒）
+    const float INTERCEPT_P_INFLATE   = 5.0f;   // 攔截完成後 P 矩陣膨脹係數
     // 純單柱旋轉無法 prune 假設（數學上不可能，論文也驗證），所以 SPIN 上限不再用 360°。
     // 180° 已足夠覆蓋所有「前後」朝向避開機械遮蔽，~8s @ KIDNAP_SPIN_SPEED=0.4 rad/s。
     const float SPIN_MAX_ANGLE        = static_cast<float>(M_PI);
@@ -173,6 +182,15 @@ int main(int argc, char** argv)
             }
             rate.sleep();
             continue;
+        }
+
+        // ------------------------------------------------------------------
+        // 攔截完成信號：膨脹 P 矩陣，讓 EKF 重新靠地標觀測收斂
+        // ------------------------------------------------------------------
+        if (interception_done_flag && state == LocState::EKF_PRIMARY) {
+            ekf.inflateCovariance(INTERCEPT_P_INFLATE);
+            interception_done_flag = false;
+            ROS_WARN("[EKF] 收到攔截完成信號，膨脹 P 矩陣 (×%.1f) 重新收斂", INTERCEPT_P_INFLATE);
         }
 
         // ------------------------------------------------------------------
@@ -420,20 +438,24 @@ int main(int argc, char** argv)
                 case RecoveryStage::SPIN: {
                     float bx, by, bt;
                     if (kr.getBest(bx, by, bt)) {
-                        // 列出所有存活假設的 (θ, log_lik, rx, ry)，方便判讀 prune 是否生效
-                        std::string alive_str;
-                        for (const auto& h : kr.getHypotheses()) {
-                            if (!h.alive) continue;
-                            char buf[64];
-                            snprintf(buf, sizeof(buf),
-                                "[θ%+.2f L%+.1f (%+.2f,%+.2f)] ",
-                                h.theta, h.log_lik, h.rx, h.ry);
-                            alive_str += buf;
-                        }
+                        // // 列出所有存活假設的 (θ, log_lik, rx, ry)，方便判讀 prune 是否生效
+                        // std::string alive_str;
+                        // for (const auto& h : kr.getHypotheses()) {
+                        //     if (!h.alive) continue;
+                        //     char buf[64];
+                        //     snprintf(buf, sizeof(buf),
+                        //         "[θ%+.2f L%+.1f (%+.2f,%+.2f)] ",
+                        //         h.theta, h.log_lik, h.rx, h.ry);
+                        //     alive_str += buf;
+                        // }
+                        // ROS_WARN_THROTTLE(0.5,
+                        //     "[KIDNAP] SPIN 轉%.0f° | 存活%d posts=%zu | %s",
+                        //     kr.getSpinAccum() * 180.0f / M_PI, kr.aliveCount(),
+                        //     latest_posts.size(), alive_str.c_str());
                         ROS_WARN_THROTTLE(0.5,
-                            "[KIDNAP] SPIN 轉%.0f° | 存活%d posts=%zu | %s",
+                            "[KIDNAP] SPIN 轉%.0f° | 存活%d best θ=%+.2f posts=%zu",
                             kr.getSpinAccum() * 180.0f / M_PI, kr.aliveCount(),
-                            latest_posts.size(), alive_str.c_str());
+                            bt, latest_posts.size());
                     } else {
                         ROS_WARN_THROTTLE(0.5,
                             "[KIDNAP] SPIN 轉%.0f° | 尚無假設（等看到單柱）posts=%zu",
@@ -445,7 +467,7 @@ int main(int argc, char** argv)
                     int rc = std::count(return_succ_window.begin(),
                                         return_succ_window.end(), true);
                     ROS_WARN_THROTTLE(0.5,
-                        "[KIDNAP] RETURN 機(%+.2f,%+.2f,θ%+.2f)→目標x=0 "
+                        "[KIDNAP] RETURN 機(%+.2f,%+.2f,θ=%+.2f)→目標x=0 "
                         "兩柱確認(%d/%zu, 達標 %d) posts=%zu",
                         ex, ey, et, rc, return_succ_window.size(),
                         RETURN_THRESH, latest_posts.size());
@@ -491,9 +513,9 @@ int main(int argc, char** argv)
             double roll, pitch, odom_yaw;
             tf::Matrix3x3(odom_q).getRPY(roll, pitch, odom_yaw);
 
-            float cx = ex - odom_x;
-            float cy = ey - odom_y;
             float ct = et - static_cast<float>(odom_yaw);
+            float cx = ex - cosf(ct) * odom_x + sinf(ct) * odom_y;
+            float cy = ey - sinf(ct) * odom_x - cosf(ct) * odom_y;
 
             tf::Transform map_to_odom;
             map_to_odom.setOrigin(tf::Vector3(cx, cy, 0.0));

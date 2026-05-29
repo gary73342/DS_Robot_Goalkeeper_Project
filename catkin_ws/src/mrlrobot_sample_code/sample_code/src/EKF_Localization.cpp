@@ -61,8 +61,8 @@ bool EKFLocalizer::initFromPosts(const std::vector<Observation>& obs_list)
         mu_ << rx, ry, rt;
         sigma_ = Matrix3f::Identity() * 0.30f; // 幾何解算後仍有光達雜訊，不宜過小
         initialized_ = true;
-        std::cout << "[EKF] 幾何初始化成功 (A→L,B→R): X=" << rx
-                  << " Y=" << ry << " θ=" << rt << std::endl;
+        // std::cout << "[EKF] 幾何初始化成功 (A→L,B→R): X=" << rx
+        //           << " Y=" << ry << " θ=" << rt << std::endl;
         return true;
     }
 
@@ -71,8 +71,8 @@ bool EKFLocalizer::initFromPosts(const std::vector<Observation>& obs_list)
         mu_ << rx, ry, rt;
         sigma_ = Matrix3f::Identity() * 0.30f;
         initialized_ = true;
-        std::cout << "[EKF] 幾何初始化成功 (A→R,B→L): X=" << rx
-                  << " Y=" << ry << " θ=" << rt << std::endl;
+        // std::cout << "[EKF] 幾何初始化成功 (A→R,B→L): X=" << rx
+        //           << " Y=" << ry << " θ=" << rt << std::endl;
         return true;
     }
 
@@ -102,8 +102,8 @@ bool EKFLocalizer::solveGeometric(const Observation& obs_a, const Observation& l
     // 由聯立方程組解 θ：
     //   dX = dx*cosθ - dy*sinθ
     //   dY = dx*sinθ + dy*cosθ
-    // → θ = atan2(dX*dy - dY*dx, dX*dx + dY*dy) 後取解
-    out_theta = std::atan2(dX * dy - dY * dx,
+    // → θ = atan2(dY*dx - dX*dy, dX*dx + dY*dy) 後取解
+    out_theta = std::atan2(dY * dx - dX * dy,
                             dX * dx + dY * dy);
 
     // 注意：上式等價於 atan2(-dy, dx) 只在 dY=0 時成立
@@ -290,6 +290,11 @@ void EKFLocalizer::getEstimate(float& ex, float& ey, float& et) const
 float EKFLocalizer::getVarianceX() const
 {
     return sigma_(0, 0); // x 的方差
+}
+
+void EKFLocalizer::inflateCovariance(float factor)
+{
+    sigma_ *= factor;
 }
 
 float EKFLocalizer::normalizeAngle(float angle)

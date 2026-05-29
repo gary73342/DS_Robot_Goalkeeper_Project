@@ -20,7 +20,7 @@ import rospy
 import numpy as np
 import math
 from geometry_msgs.msg import Twist
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Float32MultiArray, Bool
 from nav_msgs.msg import Odometry
 from log import setup_log
 
@@ -102,6 +102,11 @@ RETURN_THETA_ALIGN  = 0.3    # |θ 誤差| > 此值時只旋轉不平移（rad�
 
 # 未收斂時的 odom 相對巡邏範圍（±公尺，從啟動點算起）
 PATROL_RELATIVE_RANGE   = 0.2
+
+# 攔截完成判斷
+INTERCEPT_SPEED_THRESH  = 0.15  # 球視為靜止的速度閾值（m/s）
+INTERCEPT_DIST_THRESH   = 0.30  # 球視為貼近機器人的距離閾值（m）
+INTERCEPT_CONFIRM_TIME  = 0.5   # 條件需持續多久才確認攔截完成（秒）
 
 # 系統延遲補償（從發出指令到馬達開始動的延遲，單位秒）
 # SYSTEM_DELAY    = 0.08
@@ -289,8 +294,14 @@ class FusionNode:
         self.current_speed  = 0.0   # 上次實際發出的速度
         self.ramp_last_time = None
 
+        # 攔截完成狀態
+        self.is_intercepted              = False
+        self.intercept_condition_start   = None
+
         # Publisher
         self.pub_vel = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
+        self.pub_interception_done = rospy.Publisher(
+            "/interception_done", Bool, queue_size=1)
 
         # Subscribers
         rospy.Subscriber("/ball_camera_world", Float32MultiArray,
@@ -472,6 +483,11 @@ class FusionNode:
         elapsed = rospy.Time.now().to_sec() - self.last_valid_obs_time
 
         if elapsed > LOST_TIMEOUT and not self.is_lost:
+            if self.is_intercepted:
+                rospy.logwarn("[Fusion] ★ 攔截後球消失（被拿走），發送 interception_done 信號")
+                self.pub_interception_done.publish(Bool(data=True))
+                self.is_intercepted = False
+                self.intercept_condition_start = None
             rospy.logwarn("[Fusion] 球消失超過 %.1f 秒，進入 LOST 模式（EKF 繼續預測）", LOST_TIMEOUT)
             self.is_lost = True
             self._stop_robot()
@@ -539,10 +555,36 @@ class FusionNode:
             mode_str, bx, by, vx, vy,
             target_x, self.robot_x, speed)
     '''
+    def _check_intercept(self, bx, by, vx, vy):
+        speed = math.hypot(vx, vy)
+        dist  = math.hypot(bx - self.robot_x, by - self.robot_y)
+
+        conditions_met = (
+            speed < INTERCEPT_SPEED_THRESH and
+            dist  < INTERCEPT_DIST_THRESH  and
+            by    > DEFENSE_LINE_Y
+        )
+
+        now = rospy.Time.now().to_sec()
+        if conditions_met:
+            if self.intercept_condition_start is None:
+                self.intercept_condition_start = now
+            elif now - self.intercept_condition_start >= INTERCEPT_CONFIRM_TIME:
+                self.is_intercepted = True
+                self.intercept_condition_start = None
+                rospy.logwarn("[Fusion] ★ 攔截完成！停住等球被拿走")
+        else:
+            self.intercept_condition_start = None
+
     def _publish_control(self):
         # KIDNAP_RECOVERY 期間：交給恢復控制
         if self.is_kidnap_recovery:
             self._do_recovery_control()
+            return
+
+        # 攔截完成：停住等球消失（球消失由 _check_lost 處理）
+        if self.is_intercepted:
+            self._stop_robot()
             return
 
         state = self.ekf.get_state()
@@ -576,6 +618,8 @@ class FusionNode:
         rospy.loginfo_throttle(0.5,
             "[Fusion] TRACK | 機X=%+.2f 落點X=%+.2f 誤差=%+.2f 球速=%.2f",
             self.robot_x, target_x, error, ball_speed)
+
+        self._check_intercept(bx, by, vx, vy)
 
 
     def _theta_correction(self):
@@ -633,7 +677,7 @@ class FusionNode:
                 cmd.linear.x = -speed
 
             rospy.logwarn_throttle(1.0,
-                "[Fusion] RECOVERY RETURN — 機(%.2f,%.2f,θ%.2f) "
+                "[Fusion] RECOVERY RETURN — 機(%.2f,%.2f,θ=%.2f) "
                 "X誤差=%+.2f θ誤差=%+.2f v=%+.2f w=%+.2f",
                 self.robot_x, self.robot_y, self.robot_theta,
                 error_x, theta_error, cmd.linear.x, cmd.angular.z)

@@ -39,6 +39,8 @@ public:
 
     bool isInitialized() const { return initialized_; }
 
+    // 攔截完成後膨脹共變異數矩陣，讓 EKF 重新靠地標收斂
+    void inflateCovariance(float factor);
 
 private:
     // 狀態均值 [x, y, θ]
