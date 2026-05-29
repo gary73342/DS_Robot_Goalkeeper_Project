@@ -23,7 +23,9 @@
 //   /hypothesis_cloud (visualization_msgs/Marker)  假設點雲（RViz 除錯用）
 
 #include <iostream>
+#include <string>
 #include <vector>
+#include <deque>
 #include <cmath>
 #include <algorithm>
 #include <clocale>
@@ -104,16 +106,24 @@ int main(int argc, char** argv)
     // ★ 調教區
     const float INNOV_THRESHOLD       = 0.30f;  // innovation L2 norm > 此值視為異常
     const int   KIDNAP_COUNT          = 15;     // 條件A：連續 N 幀觸發（750ms@20Hz）
-    const int   POSTS_LOW_COUNT       = 60;     // 條件B：posts<2 持續 N 幀觸發（3秒@20Hz）
+    // 條件B sliding window：最近 60 幀中有 ≥40 幀 posts<2 就觸發
+    // （避免「偶爾一幀看到兩柱就清零」的脆弱性，60 ≈ 3s @ 20Hz）
+    const int   POSTS_LOW_WINDOW      = 60;
+    const int   POSTS_LOW_THRESH      = 40;
     const float GOODX_VAR_THRESH      = 0.05f;  // var_x 低於此值才更新 last_good_x（可信）
     const float SETTLE_DURATION       = 5.0f;   // SETTLE 落地等待（秒）
-    const float FULL_TURN             = 2.0f * static_cast<float>(M_PI); // 轉滿一圈→HALT
-    const int   RETURN_CONFIRM_FRAMES = 20;     // RETURN/HALT：真兩柱連續 N 幀才切回（~1s@20Hz）
+    // 純單柱旋轉無法 prune 假設（數學上不可能，論文也驗證），所以 SPIN 上限不再用 360°。
+    // 180° 已足夠覆蓋所有「前後」朝向避開機械遮蔽，~8s @ KIDNAP_SPIN_SPEED=0.4 rad/s。
+    const float SPIN_MAX_ANGLE        = static_cast<float>(M_PI);
+    // 切回 sliding window：最近 20 幀中有 ≥11 幀 init 成功就切回 EKF
+    // （perception 偶有單幀雜訊，連續 20 幀太脆弱，超過一半已足夠）
+    const int   RETURN_WINDOW         = 20;
+    const int   RETURN_THRESH         = 11;
     const float RETURN_TIMEOUT        = 20.0f;  // RETURN 逾時未切回 → HALT（疑似收斂到錯位）
 
     int       kidnap_frames     = 0;
-    int       posts_low_frames  = 0;
-    int       return_confirm    = 0;     // RETURN/HALT 切回確認計數
+    std::deque<bool> posts_low_window;     // 條件B sliding window
+    std::deque<bool> return_succ_window;   // RETURN/HALT 切回 sliding window
     float     last_good_x       = 0.0f;  // 最後一次可信的 EKF x（綁架前），決定恢復側別
     bool      last_good_x_valid = false;
     ros::Time settle_start_time;
@@ -189,7 +199,7 @@ int main(int argc, char** argv)
                 last_good_x_valid = true;
             }
 
-            // 條件A：innovation 異常高 + 可見門柱不足
+            // 條件A：innovation 異常高 + 可見門柱不足（連續計）
             bool cond_A = (innov > INNOV_THRESHOLD) && (n_posts < 2);
             if (cond_A) {
                 kidnap_frames++;
@@ -200,24 +210,30 @@ int main(int argc, char** argv)
                 kidnap_frames = 0;
             }
 
-            // 條件B：posts<2 持續過久（cond_A 活躍時不計，避免雙重累計）
-            if (n_posts >= 2)  { posts_low_frames = 0; }
-            else if (!cond_A)  { posts_low_frames++; }
+            // 條件B：sliding window — 最近 POSTS_LOW_WINDOW 幀有 ≥POSTS_LOW_THRESH 幀 posts<2
+            posts_low_window.push_back(n_posts < 2);
+            if (static_cast<int>(posts_low_window.size()) > POSTS_LOW_WINDOW)
+                posts_low_window.pop_front();
+            int posts_low_count = std::count(posts_low_window.begin(),
+                                              posts_low_window.end(), true);
+            bool cond_B = (static_cast<int>(posts_low_window.size()) >= POSTS_LOW_WINDOW)
+                          && (posts_low_count >= POSTS_LOW_THRESH);
 
-            if (kidnap_frames >= KIDNAP_COUNT || posts_low_frames >= POSTS_LOW_COUNT) {
+            if (kidnap_frames >= KIDNAP_COUNT || cond_B) {
                 // 用最後可信 x 的符號決定側別；無可信值時退回當前 ex
                 float side_x   = last_good_x_valid ? last_good_x : ex;
                 int   post_side = (side_x > 0.0f) ? 0 : 1;
                 kr.reset(post_side);                 // 進入 SETTLE
-                return_confirm    = 0;
-                posts_low_frames  = 0;
+                posts_low_window.clear();
+                return_succ_window.clear();
                 kidnap_frames     = 0;
                 settle_start_time = ros::Time::now();
                 state             = LocState::KIDNAP_RECOVERY;
                 ROS_WARN("[KIDNAP] ★觸發 last_good_x=%+.2f%s → %s柱側 "
-                         "(觸發時ekf_x=%+.2f) innov=%.3f posts=%zu",
+                         "(觸發時ekf_x=%+.2f) innov=%.3f posts=%zu B=%d/%d",
                          side_x, last_good_x_valid ? "" : "(無可信值,用ekf_x)",
-                         post_side == 0 ? "右" : "左", ex, innov, n_posts);
+                         post_side == 0 ? "右" : "左", ex, innov, n_posts,
+                         posts_low_count, POSTS_LOW_THRESH);
             }
         }
 
@@ -241,64 +257,93 @@ int main(int argc, char** argv)
             } else if (stg == RecoveryStage::SPIN) {
                 kr.addSpin(w * dt);
 
+                // 嘗試真兩柱快速路徑：posts>=2 且 initFromPosts 通過 → RETURN
+                bool init_ok = false;
                 if (n_posts >= 2 && ekf.initFromPosts(latest_posts)) {
-                    // 旋轉中剛好看到兩柱：直接乾淨重定位，進 RETURN
                     kr.setStage(RecoveryStage::RETURN);
-                    return_confirm    = 0;
+                    return_succ_window.clear();
                     return_start_time = ros::Time::now();
                     ROS_WARN("[KIDNAP] SPIN 看到兩柱，直接重定位 → RETURN");
-                } else if (n_posts == 1) {
-                    const Observation& obs = latest_posts[0];
-                    if (!kr.hasHypotheses()) {
-                        int n = kr.generateHypotheses(obs);
-                        ROS_WARN("[KIDNAP] SPIN 生成 %d 個假設（單側遍歷 36 θ）", n);
-                    } else {
-                        kr.propagate(w * dt);
-                        kr.updateLikelihood(obs);
-                        kr.prune();
-                    }
-                    float bx, by, bt;
-                    if (kr.converged(bx, by, bt)) {
-                        ekf = EKFLocalizer(bx, by, bt);
-                        kr.setStage(RecoveryStage::RETURN);
-                        return_confirm    = 0;
-                        return_start_time = ros::Time::now();
-                        ROS_WARN("[KIDNAP] ★收斂 θ=%+.2f rx=%+.2f ry=%+.2f 存活=%d "
-                                 "→ 重置EKF，進 RETURN", bt, bx, by, kr.aliveCount());
-                    }
-                } else {
-                    // posts==0：保持假設與旋轉同步推進，不更新似然
-                    if (kr.hasHypotheses()) kr.propagate(w * dt);
+                    init_ok = true;
                 }
 
-                // 轉滿一圈仍未收斂 → HALT
+                // fallback：未進入 RETURN 時走假設網格路徑
+                //   posts==1            → 用單柱生成 / 更新 / prune
+                //   posts==0 或 假兩柱   → 只 propagate，不更新似然（觀測不可信）
+                if (!init_ok && kr.getStage() == RecoveryStage::SPIN) {
+                    if (n_posts == 1) {
+                        const Observation& obs = latest_posts[0];
+                        if (!kr.hasHypotheses()) {
+                            int n = kr.generateHypotheses(obs);
+                            ROS_WARN("[KIDNAP] SPIN 生成 %d 個假設（單側遍歷 36 θ）", n);
+                        } else {
+                            kr.propagate(w * dt);
+                            kr.updateLikelihood(obs);
+                            kr.prune();
+                        }
+                        float bx, by, bt;
+                        if (kr.converged(bx, by, bt)) {
+                            ekf = EKFLocalizer(bx, by, bt);
+                            kr.setStage(RecoveryStage::RETURN);
+                            return_succ_window.clear();
+                            return_start_time = ros::Time::now();
+                            ROS_WARN("[KIDNAP] ★收斂 θ=%+.2f rx=%+.2f ry=%+.2f 存活=%d "
+                                     "→ 重置EKF，進 RETURN", bt, bx, by, kr.aliveCount());
+                        }
+                    } else {
+                        // posts==0 或 posts>=2 但 init 失敗（假兩柱）：
+                        // 只推進假設 θ 保持與旋轉同步，不用不可信觀測更新似然
+                        if (kr.hasHypotheses()) kr.propagate(w * dt);
+                    }
+                }
+
+                // SPIN 上限到了（180°）：仍沒看到兩柱 → 拿中間假設當折衷猜測進 RETURN
+                // 整段都沒生成過任何假設（從頭到尾沒看到單柱）才退回 HALT
                 if (kr.getStage() == RecoveryStage::SPIN
-                        && kr.getSpinAccum() >= FULL_TURN) {
-                    kr.setStage(RecoveryStage::HALT);
-                    return_confirm = 0;
-                    ROS_WARN("[KIDNAP] 轉滿 360° 未收斂 → HALT 停止");
+                        && kr.getSpinAccum() >= SPIN_MAX_ANGLE) {
+                    float bx, by, bt;
+                    if (kr.getMedian(bx, by, bt)) {
+                        ekf = EKFLocalizer(bx, by, bt);
+                        kr.setStage(RecoveryStage::RETURN);
+                        return_succ_window.clear();
+                        return_start_time = ros::Time::now();
+                        ROS_WARN("[KIDNAP] 轉滿 180° 未看到兩柱 → 取中位數假設 "
+                                 "θ=%+.2f rx=%+.2f ry=%+.2f 存活=%d → RETURN",
+                                 bt, bx, by, kr.aliveCount());
+                    } else {
+                        kr.setStage(RecoveryStage::HALT);
+                        return_succ_window.clear();
+                        ROS_WARN("[KIDNAP] 轉滿 180° 期間從未生成假設 → HALT");
+                    }
                 }
 
             } else {
-                // RETURN（弧線導航）或 HALT（停住）：等真兩柱連續 N 幀切回
-                if (n_posts >= 2 && ekf.initFromPosts(latest_posts)) {
-                    return_confirm++;
-                    if (return_confirm >= RETURN_CONFIRM_FRAMES) {
-                        float fx, fy, ft;
-                        ekf.getEstimate(fx, fy, ft);
-                        kidnap_frames = 0;
-                        state         = LocState::EKF_PRIMARY;
-                        ROS_WARN("[KIDNAP] ★恢復完成，切回 EKF | X=%+.2f Y=%+.2f", fx, fy);
-                    }
-                } else {
-                    return_confirm = 0;
+                // RETURN（弧線導航）或 HALT（停住）：sliding window 切回
+                // 最近 RETURN_WINDOW 幀中有 ≥RETURN_THRESH 幀 init 成功就切回 EKF
+                bool init_succ = (n_posts >= 2 && ekf.initFromPosts(latest_posts));
+                return_succ_window.push_back(init_succ);
+                if (static_cast<int>(return_succ_window.size()) > RETURN_WINDOW)
+                    return_succ_window.pop_front();
+                int return_succ_count = std::count(return_succ_window.begin(),
+                                                    return_succ_window.end(), true);
+
+                if (static_cast<int>(return_succ_window.size()) >= RETURN_WINDOW
+                        && return_succ_count >= RETURN_THRESH) {
+                    float fx, fy, ft;
+                    ekf.getEstimate(fx, fy, ft);
+                    kidnap_frames = 0;
+                    posts_low_window.clear();
+                    return_succ_window.clear();
+                    state         = LocState::EKF_PRIMARY;
+                    ROS_WARN("[KIDNAP] ★恢復完成（%d/%d in last %d）切回 EKF | X=%+.2f Y=%+.2f",
+                             return_succ_count, RETURN_THRESH, RETURN_WINDOW, fx, fy);
                 }
 
                 // RETURN 超時保護：收斂到錯 pose 時會朝錯目標無限繞行 → 逾時停下
                 if (kr.getStage() == RecoveryStage::RETURN
                         && (ros::Time::now() - return_start_time).toSec() > RETURN_TIMEOUT) {
                     kr.setStage(RecoveryStage::HALT);
-                    return_confirm = 0;
+                    return_succ_window.clear();
                     ROS_WARN("[KIDNAP] RETURN 超時 %.0fs 未切回 → HALT（疑似收斂到錯誤位置）",
                              RETURN_TIMEOUT);
                 }
@@ -375,10 +420,20 @@ int main(int argc, char** argv)
                 case RecoveryStage::SPIN: {
                     float bx, by, bt;
                     if (kr.getBest(bx, by, bt)) {
+                        // 列出所有存活假設的 (θ, log_lik, rx, ry)，方便判讀 prune 是否生效
+                        std::string alive_str;
+                        for (const auto& h : kr.getHypotheses()) {
+                            if (!h.alive) continue;
+                            char buf[64];
+                            snprintf(buf, sizeof(buf),
+                                "[θ%+.2f L%+.1f (%+.2f,%+.2f)] ",
+                                h.theta, h.log_lik, h.rx, h.ry);
+                            alive_str += buf;
+                        }
                         ROS_WARN_THROTTLE(0.5,
-                            "[KIDNAP] SPIN 轉%.0f° | 存活%d best:θ=%+.2f rx=%+.2f ry=%+.2f posts=%zu",
+                            "[KIDNAP] SPIN 轉%.0f° | 存活%d posts=%zu | %s",
                             kr.getSpinAccum() * 180.0f / M_PI, kr.aliveCount(),
-                            bt, bx, by, latest_posts.size());
+                            latest_posts.size(), alive_str.c_str());
                     } else {
                         ROS_WARN_THROTTLE(0.5,
                             "[KIDNAP] SPIN 轉%.0f° | 尚無假設（等看到單柱）posts=%zu",
@@ -386,16 +441,24 @@ int main(int argc, char** argv)
                     }
                     break;
                 }
-                case RecoveryStage::RETURN:
+                case RecoveryStage::RETURN: {
+                    int rc = std::count(return_succ_window.begin(),
+                                        return_succ_window.end(), true);
                     ROS_WARN_THROTTLE(0.5,
-                        "[KIDNAP] RETURN 機(%+.2f,%+.2f,θ%+.2f)→目標x=0 兩柱確認(%d/%d) posts=%zu",
-                        ex, ey, et, return_confirm, RETURN_CONFIRM_FRAMES, latest_posts.size());
+                        "[KIDNAP] RETURN 機(%+.2f,%+.2f,θ%+.2f)→目標x=0 "
+                        "兩柱確認(%d/%zu, 達標 %d) posts=%zu",
+                        ex, ey, et, rc, return_succ_window.size(),
+                        RETURN_THRESH, latest_posts.size());
                     break;
-                case RecoveryStage::HALT:
+                }
+                case RecoveryStage::HALT: {
+                    int rc = std::count(return_succ_window.begin(),
+                                        return_succ_window.end(), true);
                     ROS_WARN_THROTTLE(1.0,
-                        "[KIDNAP] HALT 停止（轉滿一圈未收斂）監看兩柱中 posts=%zu",
-                        latest_posts.size());
+                        "[KIDNAP] HALT 停止 監看兩柱中(%d/%zu, 達標 %d) posts=%zu",
+                        rc, return_succ_window.size(), RETURN_THRESH, latest_posts.size());
                     break;
+                }
             }
         }
 

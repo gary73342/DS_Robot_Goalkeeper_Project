@@ -80,9 +80,10 @@ KP_Y_CORRECTION        = 1.5   # theta 目標增益
 Y_CORRECTION_MAX       = 0.12  # theta 目標上限 (rad ≈ 6.9°)
 
 # 速度 Ramp（緩慢起步 / 煞車）
-PATROL_MAX_SPEED = 0.20   # 巡邏最大速度（m/s）
-MAX_ACCEL        = 0.8    # 加速度上限（m/s²）—— 起步緩慢加速
-MAX_DECEL        = 1.2    # 減速度上限（m/s²）—— 煞車稍快但不急停
+PATROL_MAX_SPEED    = 0.20   # 巡邏最大速度（m/s）
+MAX_ACCEL           = 0.8    # 巡邏加速度上限（m/s²）
+INTERCEPT_MAX_ACCEL = 1.5    # 攔截加速度上限（m/s²）—— 追球需要更猛的起步
+MAX_DECEL           = 1.2    # 減速度上限（m/s²）—— 煞車稍快但不急停
 
 # LOST 狀態：連續幾秒沒有有效觀測就停止攔截
 LOST_TIMEOUT      = 0.5   # 秒：進入 LOST 模式（回巡邏），EKF 繼續預測
@@ -97,6 +98,7 @@ KIDNAP_RETURN_SPEED = 0.15   # RETURN 弧線前進速度（m/s，cmd.linear.x �
 RETURN_GOAL_X       = 0.0    # RETURN 導航目標 X（場地中心，保證走到看得到兩柱）
 RETURN_GOAL_Y       = DEFENSE_LINE_Y  # 目標 Y（不強制精確，巡邏線附近即可）
 RETURN_GOAL_REACHED = 0.10   # 距目標小於此值不再前進（m）
+RETURN_THETA_ALIGN  = 0.3    # |θ 誤差| > 此值時只旋轉不平移（rad，約 17°）
 
 # 未收斂時的 odom 相對巡邏範圍（±公尺，從啟動點算起）
 PATROL_RELATIVE_RANGE   = 0.2
@@ -439,7 +441,7 @@ class FusionNode:
     # 速度 Ramp：限制每次發布的速度變化率，避免急停急衝
     # ------------------------------------------------------------------
 
-    def _apply_ramp(self, target_speed):
+    def _apply_ramp(self, target_speed, max_accel=MAX_ACCEL):
         now = rospy.Time.now().to_sec()
         if self.ramp_last_time is None:
             self.ramp_last_time = now
@@ -448,11 +450,15 @@ class FusionNode:
         dt = min(now - self.ramp_last_time, 0.2)   # 防止長時間暫停後一次跳太多
         self.ramp_last_time = now
 
-        delta = target_speed - self.current_speed
-        if delta > 0:
-            delta = min(delta, MAX_ACCEL * dt)
+        # 加速 vs 減速取決於「速度大小變化」而非 delta 正負。
+        # 例：current=0, target=-0.22 時 delta=-0.22<0 看似減速，但實際是「從靜止加速到 -X 方向」，
+        # 應該用 max_accel（否則往 -X 追球的加速度會被誤限到 MAX_DECEL，導致左右不對稱）。
+        if abs(target_speed) >= abs(self.current_speed):
+            rate = max_accel
         else:
-            delta = max(delta, -MAX_DECEL * dt)
+            rate = MAX_DECEL
+        delta = target_speed - self.current_speed
+        delta = max(min(delta, rate * dt), -rate * dt)
         self.current_speed += delta
         return self.current_speed
 
@@ -553,7 +559,7 @@ class FusionNode:
                 speed = math.copysign(MIN_SPEED, speed)
             speed = np.clip(speed, -MAX_SPEED, MAX_SPEED)
 
-        speed = self._apply_ramp(speed)
+        speed = self._apply_ramp(speed, INTERCEPT_MAX_ACCEL)
 
         # 硬性邊界：已超出球門範圍且仍朝外移動時強制歸零
         if self.robot_x > GUARD_X_MAX and speed > 0:
@@ -595,8 +601,9 @@ class FusionNode:
           0=SETTLE（停住等落地）  1=SPIN（慢速原地旋轉）
           2=RETURN（弧線導航回場） 3=HALT（停住）
         """
-        self.current_speed  = 0.0
-        self.ramp_last_time = None
+        # 不清 ramp_last_time（跟 _stop_robot 一致）：恢復切回 EKF_PRIMARY 後
+        # 第一拍能用累積 dt 直接接近 max_accel × dt_cap，不會白白損失一拍
+        self.current_speed = 0.0
         cmd = Twist()
 
         if self.recovery_sub == 1:    # SPIN：慢速原地旋轉找柱（全程 0 平移）
@@ -604,30 +611,32 @@ class FusionNode:
             cmd.angular.z = KIDNAP_SPIN_SPEED
             rospy.logwarn_throttle(1.0, "[Fusion] RECOVERY SPIN — 慢速旋轉搜尋球柱")
 
-        elif self.recovery_sub == 2:  # RETURN：go-to-goal 弧線導航朝 (0, ~0.5)
-            dx = RETURN_GOAL_X - self.robot_x
-            dy = RETURN_GOAL_Y - self.robot_y
-            dist = math.hypot(dx, dy)
-
-            desired_heading = math.atan2(dy, dx)
-            heading_err = desired_heading - self.robot_theta
-            while heading_err >  math.pi: heading_err -= 2.0 * math.pi
-            while heading_err < -math.pi: heading_err += 2.0 * math.pi
-
-            # 角速度：同 _theta_correction 慣例（cmd.angular.z = KP·(目標朝向 − 當前朝向)）
-            cmd.angular.z = float(np.clip(KP_ANGULAR * heading_err,
+        elif self.recovery_sub == 2:  # RETURN：先轉回守門姿態 (θ=0) 再 1D X 控制
+            # θ 控制：驅動 → 0（守門姿態 = LiDAR +X 對齊全域 +X，物理朝向 -X）
+            # 這個專案的 θ_EKF 是 LiDAR +X 在全域的方向，θ=0 ⇔ 物理面 -X
+            theta_error = self.robot_theta
+            while theta_error >  math.pi: theta_error -= 2.0 * math.pi
+            while theta_error < -math.pi: theta_error += 2.0 * math.pi
+            cmd.angular.z = float(np.clip(-KP_ANGULAR * theta_error,
                                           -MAX_ANGULAR_SPEED, MAX_ANGULAR_SPEED))
 
-            # 前進速度：邊走邊修，未對準目標時自動放慢（cos 加權），到目標附近停止前進
-            if dist < RETURN_GOAL_REACHED:
+            # X 平移：只在 θ 接近 0 時啟動。底盤是差速驅動，cmd.linear.x = 前進方向；
+            # θ 沒對齊就平移會沿錯誤方向衝（上次往 +Y 衝就是吃這個）
+            error_x = RETURN_GOAL_X - self.robot_x
+            if abs(theta_error) > RETURN_THETA_ALIGN or abs(error_x) < RETURN_GOAL_REACHED:
                 cmd.linear.x = 0.0
             else:
-                cmd.linear.x = KIDNAP_RETURN_SPEED * max(0.0, math.cos(heading_err))
+                speed = KP_LINEAR * error_x
+                if abs(speed) < MIN_SPEED:
+                    speed = math.copysign(MIN_SPEED, speed)
+                speed = float(np.clip(speed, -KIDNAP_RETURN_SPEED, KIDNAP_RETURN_SPEED))
+                cmd.linear.x = -speed
 
             rospy.logwarn_throttle(1.0,
-                "[Fusion] RECOVERY RETURN — 機(%.2f,%.2f,θ%.2f)→(0,%.2f) dist=%.2f v=%.2f w=%.2f",
+                "[Fusion] RECOVERY RETURN — 機(%.2f,%.2f,θ%.2f) "
+                "X誤差=%+.2f θ誤差=%+.2f v=%+.2f w=%+.2f",
                 self.robot_x, self.robot_y, self.robot_theta,
-                RETURN_GOAL_Y, dist, cmd.linear.x, cmd.angular.z)
+                error_x, theta_error, cmd.linear.x, cmd.angular.z)
 
         else:                          # SETTLE(0) / HALT(3)：停住
             cmd.linear.x  = 0.0
@@ -638,8 +647,10 @@ class FusionNode:
         self.pub_vel.publish(cmd)
 
     def _stop_robot(self):
-        self.current_speed  = 0.0   # 清除 ramp 狀態，下次起步重新累加
-        self.ramp_last_time = None
+        # 只清速度、保留 ramp_last_time：下次重新啟動時 ramp 會把停滯期間
+        # 累積的 dt 算進來，第一拍就能跳到接近 max_accel × dt_capped(0.2s) 的速度，
+        # 避免「球短暫消失再出現」時還要從 0 重新爬升
+        self.current_speed = 0.0
         cmd = Twist()
         self.pub_vel.publish(cmd)
 

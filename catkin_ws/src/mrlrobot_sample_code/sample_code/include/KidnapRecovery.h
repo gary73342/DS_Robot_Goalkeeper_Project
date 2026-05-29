@@ -77,6 +77,15 @@ public:
     // 取得目前最佳假設（最高 log_lik），供日誌輸出。回傳是否有存活假設。
     bool getBest(float& out_x, float& out_y, float& out_theta) const;
 
+    // 取得 alive 列表中位數的假設（按 θ 排序，generateHypotheses 已保證此順序）。
+    // 用途：純單柱旋轉無法 prune 假設集合，SPIN 上限時拿這個當「折衷猜測」進 RETURN。
+    // 比 getBest 好的點：純旋轉時所有 log_lik 相等，getBest 會固定回傳第一個（θ 最小的極端值）；
+    // 取中位數可把最大角度誤差從 ±整段弧長壓到 ±半段弧長。
+    bool getMedian(float& out_x, float& out_y, float& out_theta) const;
+
+    // 取得所有假設（含已淘汰的，由呼叫端依 h.alive 過濾），供 debug log 印全貌。
+    const std::vector<Hypothesis>& getHypotheses() const { return hyps_; }
+
     // 累積旋轉量（rad，絕對值），供 Node 判斷是否轉滿一圈。
     void  addSpin(float dtheta) { spin_accum_ += std::abs(dtheta); }
     float getSpinAccum() const  { return spin_accum_; }

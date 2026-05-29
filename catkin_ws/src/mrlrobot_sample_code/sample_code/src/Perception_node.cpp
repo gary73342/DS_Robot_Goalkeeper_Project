@@ -125,6 +125,7 @@ int main(int argc, char** argv) {
 
         // 門柱過濾：從所有偵測到的門柱中選間距最接近 0.9m 的一對發布
         // 避免機器人的腳被誤判為門柱時 EKF 收到錯誤觀測
+        // 假兩柱靠下游 EKF::initFromPosts 的 residual(0.30m) 與 update 的 Mahalanobis gate 擋
         const float GOAL_WIDTH = 0.9f;
         const float GATE_DIST  = 0.15f;
 
@@ -144,7 +145,7 @@ int main(int argc, char** argv) {
                     }
                 }
             }
-            if (best_err <= GATE_DIST) {
+            if (best_i >= 0 && best_err <= GATE_DIST) {
                 valid_posts.push_back(found_posts[best_i]);
                 valid_posts.push_back(found_posts[best_j]);
             }

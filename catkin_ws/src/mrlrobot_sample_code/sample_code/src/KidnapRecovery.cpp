@@ -180,6 +180,16 @@ bool KidnapRecovery::getBest(float& out_x, float& out_y, float& out_theta) const
     return true;
 }
 
+bool KidnapRecovery::getMedian(float& out_x, float& out_y, float& out_theta) const
+{
+    std::vector<const Hypothesis*> alive;
+    for (const auto& h : hyps_) if (h.alive) alive.push_back(&h);
+    if (alive.empty()) return false;
+    const Hypothesis* h = alive[alive.size() / 2];
+    out_x = h->rx; out_y = h->ry; out_theta = h->theta;
+    return true;
+}
+
 // ------------------------------------------------------------------------------
 // 收斂判定（R-MCL Algorithm 1）：存活數 <= SURVIVOR_THRESH 連續 CONVERGE_FRAMES 幀。
 // ------------------------------------------------------------------------------

@@ -26,7 +26,6 @@ __pycache__/
 *.pyo
 
 python/H.npy
-log_filter.py
 
 # MATLAB/Octave
 *.asv
