@@ -19,9 +19,10 @@ import sys
 import rospy
 import numpy as np
 import math
-from geometry_msgs.msg import Twist
-from std_msgs.msg import Float32MultiArray, Bool
+from geometry_msgs.msg import Twist, Point
+from std_msgs.msg import Float32MultiArray, Bool, ColorRGBA
 from nav_msgs.msg import Odometry
+from visualization_msgs.msg import Marker
 from log import setup_log
 
 # ==============================================================================
@@ -302,6 +303,9 @@ class FusionNode:
         self.pub_vel = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
         self.pub_interception_done = rospy.Publisher(
             "/interception_done", Bool, queue_size=1)
+        self.pub_field = rospy.Publisher(
+            "/field_boundary", Marker, queue_size=1, latch=True)
+        rospy.Timer(rospy.Duration(1.0), self._publish_field_boundary)
 
         # Subscribers
         rospy.Subscriber("/ball_camera_world", Float32MultiArray,
@@ -319,6 +323,39 @@ class FusionNode:
         rospy.loginfo("[Fusion] 訂閱 /ball_camera_world, /ball_lidar_world, /robot_pose")
         rospy.loginfo("[Fusion] 發布 /cmd_vel")
         rospy.loginfo("=" * 50)
+
+    # ------------------------------------------------------------------
+    # RViz 場地邊界 Marker
+    # ------------------------------------------------------------------
+
+    def _publish_field_boundary(self, _event=None):
+        marker = Marker()
+        marker.header.frame_id = "map"
+        marker.header.stamp    = rospy.Time.now()
+        marker.ns              = "field"
+        marker.id              = 0
+        marker.type            = Marker.LINE_LIST
+        marker.action          = Marker.ADD
+        marker.scale.x         = 0.02   # 線寬 2 cm
+        marker.color           = ColorRGBA(0.0, 1.0, 0.0, 0.8)
+        marker.pose.orientation.w = 1.0
+
+        # 場地四條邊（x: -0.6~0.6，y: 0~3.5）
+        # LINE_LIST：每兩個點構成一條線段
+        corners = [
+            (-0.6, 0.0), (0.6, 0.0),   # 底線
+            (0.6, 0.0),  (0.6, 3.5),   # 右邊線
+            (0.6, 3.5),  (-0.6, 3.5),  # 遠端線
+            (-0.6, 3.5), (-0.6, 0.0),  # 左邊線
+        ]
+        for (x, y) in corners:
+            p = Point()
+            p.x = x
+            p.y = y
+            p.z = 0.0
+            marker.points.append(p)
+
+        self.pub_field.publish(marker)
 
     # ------------------------------------------------------------------
     # 共用：計算 dt 並觸發 EKF predict

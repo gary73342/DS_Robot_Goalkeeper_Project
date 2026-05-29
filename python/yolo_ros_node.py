@@ -271,6 +271,7 @@ class YoloRosNode:
 
         self.bridge = CvBridge()
         self.H      = None  # Homography 矩陣，校準後載入
+        self.H_inv  = None  # H 反矩陣（世界座標 → 像素），校準後設定
 
         # Publisher：輸出全域座標給 fusion_node
         # 格式：[detected(0/1), X_world, Y_world, conf]
@@ -305,7 +306,8 @@ class YoloRosNode:
         回傳 True 表示成功取得 H 矩陣。
         """
         if os.path.exists(H_FILE_PATH):
-            self.H = np.load(H_FILE_PATH)
+            self.H     = np.load(H_FILE_PATH)
+            self.H_inv = np.linalg.inv(self.H)
             rospy.loginfo(f"[YOLO] 已載入 Homography 矩陣：{H_FILE_PATH}")
             print(f"\n[YOLO] H 矩陣內容：\n{self.H}\n")
             return True
@@ -337,7 +339,8 @@ class YoloRosNode:
         rospy.loginfo(f"[YOLO] H 矩陣已儲存至 {H_FILE_PATH}")
         print(f"\n[YOLO] H 矩陣：\n{H}\n")
 
-        self.H = H
+        self.H     = H
+        self.H_inv = np.linalg.inv(H)
         return True
 
     def _pixel_to_world(self, cx, cy):
@@ -368,6 +371,37 @@ class YoloRosNode:
             return json.loads(data.decode())
         except socket.timeout:
             return {"detected": 0, "cx": 0, "cy": 0, "w": 0, "h": 0, "conf": 0.0}
+
+    def _draw_field_boundary(self, vis_frame):
+        """
+        將場地邊界線（標定範圍 x∈[-0.45,0.45]，y∈[0,2.88]）
+        用 H_inv 投影到像素，再用 cv2.clipLine 裁掉超出圖像的部份後畫線。
+        """
+        if self.H_inv is None:
+            return
+
+        h, w = vis_frame.shape[:2]
+        rect = (0, 0, w, h)
+
+        def world_to_pixel(wx, wy):
+            pt = np.array([[[wx, wy]]], dtype=np.float32)
+            px = cv2.perspectiveTransform(pt, self.H_inv)[0][0]
+            return (int(round(px[0])), int(round(px[1])))
+
+        # 場地邊界四條線段（標定範圍內）
+        boundary_segments = [
+            ((-0.45, 0.00), ( 0.45, 0.00)),  # 底線
+            (( 0.45, 0.00), ( 0.45, 2.88)),  # 右邊線
+            (( 0.45, 2.88), (-0.45, 2.88)),  # 遠端線
+            ((-0.45, 2.88), (-0.45, 0.00)),  # 左邊線
+        ]
+
+        for (wx1, wy1), (wx2, wy2) in boundary_segments:
+            p1 = world_to_pixel(wx1, wy1)
+            p2 = world_to_pixel(wx2, wy2)
+            ok, pt1, pt2 = cv2.clipLine(rect, p1, p2)
+            if ok:
+                cv2.line(vis_frame, pt1, pt2, (0, 255, 255), 2)
 
     def image_callback(self, msg):
         """
@@ -418,6 +452,7 @@ class YoloRosNode:
                 print(f"[YOLO] ✗ 未偵測到球  (miss:{self._miss_count})")
 
         self.pub.publish(result_msg)
+        self._draw_field_boundary(vis_frame)
         self.vis_pub.publish(self.bridge.cv2_to_imgmsg(vis_frame, "bgr8"))
 
     def start(self):

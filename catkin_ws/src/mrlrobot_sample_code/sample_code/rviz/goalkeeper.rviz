@@ -9,6 +9,7 @@ Panels:
         - /Marker1
         - /Image1
         - /Marker2
+        - /Marker3
       Splitter Ratio: 0.5796766877174377
     Tree Height: 329
   - Class: rviz/Selection
@@ -28,7 +29,7 @@ Panels:
   - Class: rviz/Time
     Name: Time
     SyncMode: 0
-    SyncSource: ""
+    SyncSource: Image
 Preferences:
   PromptSaveOnExit: true
 Toolbars:
@@ -136,6 +137,14 @@ Visualization Manager:
         {}
       Queue Size: 1
       Value: true
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /field_boundary
+      Name: Marker
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -164,7 +173,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 4.051587104797363
+      Distance: 12.583612442016602
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -180,9 +189,9 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.1553983688354492
+      Pitch: 1.1503983736038208
       Target Frame: <Fixed Frame>
-      Yaw: 5.148584365844727
+      Yaw: 5.138584136962891
     Saved: ~
 Window Geometry:
   Displays:
