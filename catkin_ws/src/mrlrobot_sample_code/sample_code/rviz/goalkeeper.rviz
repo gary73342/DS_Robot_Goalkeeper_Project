@@ -10,6 +10,7 @@ Panels:
         - /Image1
         - /Marker2
         - /Marker3
+        - /Marker4
       Splitter Ratio: 0.5796766877174377
     Tree Height: 329
   - Class: rviz/Selection
@@ -140,6 +141,14 @@ Visualization Manager:
     - Class: rviz/Marker
       Enabled: true
       Marker Topic: /field_boundary
+      Name: Marker
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /predict_marker
       Name: Marker
       Namespaces:
         {}

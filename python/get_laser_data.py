@@ -9,7 +9,7 @@ from sensor_msgs.msg import LaserScan
 
 counter = 0
 fp = None
-record_time = 30.0  # 預設錄製時間 (秒)
+record_time = 60.0  # 預設錄製時間 (秒)
 
 def RAD2DEG(r):
     return r * 180.0 / math.pi

@@ -101,6 +101,14 @@ RETURN_GOAL_Y       = DEFENSE_LINE_Y  # 目標 Y（不強制精確，巡邏線�
 RETURN_GOAL_REACHED = 0.10   # 距目標小於此值不再前進（m）
 RETURN_THETA_ALIGN  = 0.3    # |θ 誤差| > 此值時只旋轉不平移（rad，約 17°）
 
+# 綁架恢復「位置先驗區」—— 僅供 RViz 顯示。必須與 KidnapRecovery.cpp 的
+# ZONE_X_MAX / ZONE_Y_MIN / ZONE_Y_MAX 保持一致。C++ 端實際過濾是兩側窄帶
+# （|x|∈[0.45,0.65]，單柱 fallback 用），這裡按需求畫成含中間的一整條帶
+# （x∈[-0.65,0.65]）；中間靠兩柱幾何重定位即可恢復，故畫整條更貼近實際能力。
+KIDNAP_ZONE_X_MAX = 0.65   # 對應 C++ ZONE_X_MAX
+KIDNAP_ZONE_Y_MIN = -0.30  # 對應 C++ ZONE_Y_MIN
+KIDNAP_ZONE_Y_MAX = 0.70   # 對應 C++ ZONE_Y_MAX
+
 # 未收斂時的 odom 相對巡邏範圍（±公尺，從啟動點算起）
 PATROL_RELATIVE_RANGE   = 0.2
 
@@ -108,6 +116,10 @@ PATROL_RELATIVE_RANGE   = 0.2
 INTERCEPT_SPEED_THRESH  = 0.15  # 球視為靜止的速度閾值（m/s）
 INTERCEPT_DIST_THRESH   = 0.30  # 球視為貼近機器人的距離閾值（m）
 INTERCEPT_CONFIRM_TIME  = 0.5   # 條件需持續多久才確認攔截完成（秒）
+
+# --- 落點預測觸發條件 ---
+BALL_INCOMING_SPEED = 0.7   # 全向球速達此值才啟動落點預測（m/s）
+INTERCEPT_T_MAX     = 5.0   # 預測時間上限（秒），防止球速極慢時落點飛太遠
 
 # 系統延遲補償（從發出指令到馬達開始動的延遲，單位秒）
 # SYSTEM_DELAY    = 0.08
@@ -306,6 +318,11 @@ class FusionNode:
         self.pub_field = rospy.Publisher(
             "/field_boundary", Marker, queue_size=1, latch=True)
         rospy.Timer(rospy.Duration(1.0), self._publish_field_boundary)
+        self.pub_predict_marker = rospy.Publisher(
+            "/predict_marker", Marker, queue_size=1)
+        self.pub_kidnap_zone = rospy.Publisher(
+            "/kidnap_zone", Marker, queue_size=1, latch=True)
+        rospy.Timer(rospy.Duration(1.0), self._publish_kidnap_zone)
 
         # Subscribers
         rospy.Subscriber("/ball_camera_world", Float32MultiArray,
@@ -340,13 +357,15 @@ class FusionNode:
         marker.color           = ColorRGBA(0.0, 1.0, 0.0, 0.8)
         marker.pose.orientation.w = 1.0
 
-        # 場地四條邊（x: -0.6~0.6，y: 0~3.5）
+        # 場地四條邊：直接綁定 _in_field 判定範圍（x: ±1.0，y: 0~3.5），
+        # 讓綠框永遠等於「球算不算在場內」的實際邊界，畫面與邏輯一致
         # LINE_LIST：每兩個點構成一條線段
+        xmin, xmax, ymax = BALL_FIELD_X_MIN, BALL_FIELD_X_MAX, BALL_FIELD_Y_MAX
         corners = [
-            (-0.6, 0.0), (0.6, 0.0),   # 底線
-            (0.6, 0.0),  (0.6, 3.5),   # 右邊線
-            (0.6, 3.5),  (-0.6, 3.5),  # 遠端線
-            (-0.6, 3.5), (-0.6, 0.0),  # 左邊線
+            (xmin, 0.0),  (xmax, 0.0),   # 底線
+            (xmax, 0.0),  (xmax, ymax),  # 右邊線
+            (xmax, ymax), (xmin, ymax),  # 遠端線
+            (xmin, ymax), (xmin, 0.0),   # 左邊線
         ]
         for (x, y) in corners:
             p = Point()
@@ -356,6 +375,37 @@ class FusionNode:
             marker.points.append(p)
 
         self.pub_field.publish(marker)
+
+    def _publish_kidnap_zone(self, _event=None):
+        """RViz 顯示綁架恢復的位置先驗區（含中間的一整條帶，純顯示）"""
+        marker = Marker()
+        marker.header.frame_id = "map"
+        marker.header.stamp    = rospy.Time.now()
+        marker.ns              = "kidnap_zone"
+        marker.id              = 0
+        marker.type            = Marker.LINE_LIST
+        marker.action          = Marker.ADD
+        marker.scale.x         = 0.02   # 線寬 2 cm
+        marker.color           = ColorRGBA(1.0, 0.5, 0.0, 0.8)  # 橙色，區別於綠色場地框
+        marker.pose.orientation.w = 1.0
+
+        # 一整條帶的矩形外框（x: ±0.68，y: -0.10~0.85）
+        x      = KIDNAP_ZONE_X_MAX
+        y0, y1 = KIDNAP_ZONE_Y_MIN, KIDNAP_ZONE_Y_MAX
+        corners = [
+            (-x, y0), (x, y0),   # 下緣
+            (x, y0),  (x, y1),   # 右緣
+            (x, y1),  (-x, y1),  # 上緣
+            (-x, y1), (-x, y0),  # 左緣
+        ]
+        for (px, py) in corners:
+            p = Point()
+            p.x = px
+            p.y = py
+            p.z = 0.0
+            marker.points.append(p)
+
+        self.pub_kidnap_zone.publish(marker)
 
     # ------------------------------------------------------------------
     # 共用：計算 dt 並觸發 EKF predict
@@ -592,6 +642,29 @@ class FusionNode:
             mode_str, bx, by, vx, vy,
             target_x, self.robot_x, speed)
     '''
+    def _publish_predict_marker(self, x, y, mode):
+        """在 RViz 中畫出落點（INTERCEPT=紅橙，TRACK=藍灰）"""
+        marker = Marker()
+        marker.header.frame_id    = "map"
+        marker.header.stamp       = rospy.Time.now()
+        marker.ns                 = "predict"
+        marker.id                 = 0
+        marker.type               = Marker.SPHERE
+        marker.action             = Marker.ADD
+        marker.pose.position.x    = x
+        marker.pose.position.y    = y
+        marker.pose.position.z    = 0.1
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 0.12
+        marker.scale.y = 0.12
+        marker.scale.z = 0.12
+        marker.lifetime = rospy.Duration(0.3)
+        if mode == "INTERCEPT":
+            marker.color = ColorRGBA(1.0, 0.2, 0.0, 0.9)   # 紅橙色：預測落點
+        else:
+            marker.color = ColorRGBA(0.4, 0.4, 1.0, 0.6)   # 藍灰色：追蹤目標
+        self.pub_predict_marker.publish(marker)
+
     def _check_intercept(self, bx, by, vx, vy):
         speed = math.hypot(vx, vy)
         dist  = math.hypot(bx - self.robot_x, by - self.robot_y)
@@ -626,8 +699,33 @@ class FusionNode:
 
         state = self.ekf.get_state()
         bx, by, vx, vy = state
+        ball_speed = math.hypot(vx, vy)
 
-        target_x = np.clip(bx, FIELD_X_MIN, FIELD_X_MAX)
+        t_intercept = 0.0
+        if ball_speed >= BALL_INCOMING_SPEED and vy < 0:
+            t_intercept = (DEFENSE_LINE_Y - by) / vy
+            t_intercept = max(0.0, min(t_intercept, INTERCEPT_T_MAX))
+            predict_x = bx + vx * t_intercept
+            # 落點在門框外（|x| > FIELD_X_MAX）代表這球不會進門，無需攔截：
+            # 不去堵門柱角落，退回 TRACK 守球當前 X。
+            # marker_x 一律畫真實點（不 clip），方便在 RViz 判斷預測準不準
+            if abs(predict_x) > FIELD_X_MAX:
+                target_x = bx
+                mode_str = "TRACK"
+                marker_x = predict_x      # 門外真實落點（已算出，畫出來驗證預測）
+            else:
+                target_x = predict_x
+                mode_str = "INTERCEPT"
+                marker_x = predict_x
+        else:
+            target_x = bx
+            mode_str = "TRACK"
+            marker_x = bx                 # 沒進預測分支，沒算落點，畫球當前 X
+
+        # marker 畫真實點（不 clip）；target_x 才 clip 給機器人控制用
+        self._publish_predict_marker(marker_x, DEFENSE_LINE_Y, mode_str)
+        target_x = np.clip(target_x, GUARD_X_MIN, GUARD_X_MAX)
+
         error = target_x - self.robot_x
 
         if abs(error) < STOP_THRESHOLD:
@@ -651,10 +749,9 @@ class FusionNode:
         cmd.angular.z = self._theta_correction()
         self.pub_vel.publish(cmd)
 
-        ball_speed = math.hypot(vx, vy)
         rospy.loginfo_throttle(0.5,
-            "[Fusion] TRACK | 機X=%+.2f 落點X=%+.2f 誤差=%+.2f 球速=%.2f",
-            self.robot_x, target_x, error, ball_speed)
+            "[Fusion] %s | 機X=%+.2f 落點X=%+.2f 誤差=%+.2f 球速=%.2f t=%.2fs",
+            mode_str, self.robot_x, target_x, error, ball_speed, t_intercept)
 
         self._check_intercept(bx, by, vx, vy)
 
