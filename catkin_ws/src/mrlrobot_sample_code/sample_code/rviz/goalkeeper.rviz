@@ -11,6 +11,7 @@ Panels:
         - /Marker2
         - /Marker3
         - /Marker4
+        - /Marker5
       Splitter Ratio: 0.5796766877174377
     Tree Height: 329
   - Class: rviz/Selection
@@ -89,7 +90,8 @@ Visualization Manager:
       Marker Topic: /visual_markers
       Name: Marker
       Namespaces:
-        {}
+        ball: true
+        goal_posts: true
       Queue Size: 100
       Value: true
     - Alpha: 1
@@ -120,7 +122,7 @@ Visualization Manager:
       Visual Enabled: true
     - Class: rviz/Image
       Enabled: true
-      Image Topic: /camera/color/image_raw
+      Image Topic: /ball_detection_image
       Max Value: 1
       Median window: 5
       Min Value: 0
@@ -143,7 +145,7 @@ Visualization Manager:
       Marker Topic: /field_boundary
       Name: Marker
       Namespaces:
-        {}
+        field: true
       Queue Size: 100
       Value: true
     - Class: rviz/Marker
@@ -151,7 +153,15 @@ Visualization Manager:
       Marker Topic: /predict_marker
       Name: Marker
       Namespaces:
-        {}
+        predict: true
+      Queue Size: 100
+      Value: true
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /kidnap_zone
+      Name: Marker
+      Namespaces:
+        kidnap_zone: true
       Queue Size: 100
       Value: true
   Enabled: true
@@ -182,7 +192,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 12.583612442016602
+      Distance: 5.676788806915283
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -198,9 +208,9 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.1503983736038208
+      Pitch: 1.010398507118225
       Target Frame: <Fixed Frame>
-      Yaw: 5.138584136962891
+      Yaw: 4.683582305908203
     Saved: ~
 Window Geometry:
   Displays:

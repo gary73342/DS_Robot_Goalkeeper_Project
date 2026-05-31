@@ -42,7 +42,8 @@ GUARD_X_MAX    =  0.42
 # 注意：這跟 FIELD_X_MIN/MAX 不同，那是機器人的移動範圍；這是實體場地大小
 BALL_FIELD_X_MIN = -1.0   # 場地左邊界（公尺）
 BALL_FIELD_X_MAX = +1.0   # 場地右邊界（公尺）
-BALL_FIELD_Y_MAX =  3.5   # 場地遠端邊界（公尺）
+BALL_FIELD_Y_MAX =  2.88  # 場地遠端邊界（公尺）：與相機標定遠端 (±0.45, 2.88) 一致
+BALL_FIELD_Y_MIN =  0.5   # 防守線後方邊界：球低於此值（已越過防守線、在機器人身後）一律忽略
 
 # --- 相機信心門檻 ---
 CONF_MIN_CAM = 0.70   # 低於此值的偵測直接忽略，不進入 EKF
@@ -50,7 +51,7 @@ CONF_MIN_CAM = 0.70   # 低於此值的偵測直接忽略，不進入 EKF
 # --- EKF 雜訊參數 ---
 # 過程雜訊（Q）：數字越大代表你越不相信物理模型，EKF 反應越靈敏但越抖
 Q_XY  = 0.05  # 位置的過程雜訊（調小：讓 EKF 更信任平滑的軌跡）
-Q_VXY = 0.1   # 速度的過程雜訊（調小：避免靜止時速度估計亂跳）
+Q_VXY = 0.5   # 速度的過程雜訊（調大：縮短平滑窗，讓速度估計快速跟上快球，代價是較抖）
 
 # 相機基礎量測雜訊（R_base）：數字越大代表越不信任相機
 R_BASE_CAM   = 0.01  # 相機很穩，給小雜訊讓 EKF 主要信任相機
@@ -81,9 +82,9 @@ KP_Y_CORRECTION        = 1.5   # theta 目標增益
 Y_CORRECTION_MAX       = 0.12  # theta 目標上限 (rad ≈ 6.9°)
 
 # 速度 Ramp（緩慢起步 / 煞車）
-PATROL_MAX_SPEED    = 0.20   # 巡邏最大速度（m/s）
+PATROL_MAX_SPEED    = 0.15   # 巡邏最大速度（m/s）—— 刻意低於攔截上限(0.22)，便於目視區分兩種模式
 MAX_ACCEL           = 0.8    # 巡邏加速度上限（m/s²）
-INTERCEPT_MAX_ACCEL = 1.5    # 攔截加速度上限（m/s²）—— 追球需要更猛的起步
+INTERCEPT_MAX_ACCEL = 2.5    # 攔截加速度上限（m/s²）—— 追球需要更猛的起步
 MAX_DECEL           = 1.2    # 減速度上限（m/s²）—— 煞車稍快但不急停
 
 # LOST 狀態：連續幾秒沒有有效觀測就停止攔截
@@ -106,7 +107,7 @@ RETURN_THETA_ALIGN  = 0.3    # |θ 誤差| > 此值時只旋轉不平移（rad�
 # （|x|∈[0.45,0.65]，單柱 fallback 用），這裡按需求畫成含中間的一整條帶
 # （x∈[-0.65,0.65]）；中間靠兩柱幾何重定位即可恢復，故畫整條更貼近實際能力。
 KIDNAP_ZONE_X_MAX = 0.65   # 對應 C++ ZONE_X_MAX
-KIDNAP_ZONE_Y_MIN = -0.30  # 對應 C++ ZONE_Y_MIN
+KIDNAP_ZONE_Y_MIN = 0.0    # 對應 C++ ZONE_Y_MIN
 KIDNAP_ZONE_Y_MAX = 0.70   # 對應 C++ ZONE_Y_MAX
 
 # 未收斂時的 odom 相對巡邏範圍（±公尺，從啟動點算起）
@@ -118,7 +119,7 @@ INTERCEPT_DIST_THRESH   = 0.30  # 球視為貼近機器人的距離閾值（m）
 INTERCEPT_CONFIRM_TIME  = 0.5   # 條件需持續多久才確認攔截完成（秒）
 
 # --- 落點預測觸發條件 ---
-BALL_INCOMING_SPEED = 0.7   # 全向球速達此值才啟動落點預測（m/s）
+BALL_INCOMING_SPEED = 0.4   # 全向球速達此值才啟動落點預測（m/s）
 INTERCEPT_T_MAX     = 5.0   # 預測時間上限（秒），防止球速極慢時落點飛太遠
 
 # 系統延遲補償（從發出指令到馬達開始動的延遲，單位秒）
@@ -133,7 +134,8 @@ INTERCEPT_T_MAX     = 5.0   # 預測時間上限（秒），防止球速極慢�
 
 def _in_field(x, y):
     """球是否在實體場地範圍內"""
-    return BALL_FIELD_X_MIN <= x <= BALL_FIELD_X_MAX and y <= BALL_FIELD_Y_MAX
+    return (BALL_FIELD_X_MIN <= x <= BALL_FIELD_X_MAX
+            and BALL_FIELD_Y_MIN <= y <= BALL_FIELD_Y_MAX)
 
 # ==============================================================================
 # Asynchronous EKF
@@ -200,7 +202,9 @@ class AsyncEKF:
             self.x[1, 0] = z[1, 0]
             self.x[2, 0] = 0.0
             self.x[3, 0] = 0.0
-            self.P = np.eye(4) * 1.0
+            # 位置很確定（剛量到）→ 小方差；速度全未知且球常從靜止突然加速 →
+            # 大方差，讓前幾幀的速度修正增益高，加速初期速度收斂
+            self.P = np.diag([1.0, 1.0, 100.0, 100.0])
             self.initialized = True
             rospy.loginfo("[EKF] 初始化完成，球的初始位置: X=%.3f Y=%.3f",
                           z[0, 0], z[1, 0])
@@ -357,15 +361,16 @@ class FusionNode:
         marker.color           = ColorRGBA(0.0, 1.0, 0.0, 0.8)
         marker.pose.orientation.w = 1.0
 
-        # 場地四條邊：直接綁定 _in_field 判定範圍（x: ±1.0，y: 0~3.5），
+        # 場地四條邊：直接綁定 _in_field 判定範圍（x: ±1.0，y: 0.5~2.88），
         # 讓綠框永遠等於「球算不算在場內」的實際邊界，畫面與邏輯一致
         # LINE_LIST：每兩個點構成一條線段
-        xmin, xmax, ymax = BALL_FIELD_X_MIN, BALL_FIELD_X_MAX, BALL_FIELD_Y_MAX
+        xmin, xmax = BALL_FIELD_X_MIN, BALL_FIELD_X_MAX
+        ymin, ymax = BALL_FIELD_Y_MIN, BALL_FIELD_Y_MAX
         corners = [
-            (xmin, 0.0),  (xmax, 0.0),   # 底線
-            (xmax, 0.0),  (xmax, ymax),  # 右邊線
+            (xmin, ymin), (xmax, ymin),  # 防守線（近端）
+            (xmax, ymin), (xmax, ymax),  # 右邊線
             (xmax, ymax), (xmin, ymax),  # 遠端線
-            (xmin, ymax), (xmin, 0.0),   # 左邊線
+            (xmin, ymax), (xmin, ymin),  # 左邊線
         ]
         for (x, y) in corners:
             p = Point()

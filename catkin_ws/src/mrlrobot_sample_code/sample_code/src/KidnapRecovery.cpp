@@ -14,7 +14,7 @@ const float KidnapRecovery::MAX_DIST        = 1.50f;
 const int   KidnapRecovery::N_THETA    = 36;     // 10° 步距
 const float KidnapRecovery::ZONE_X_MIN = 0.45f;  // |rx| 下限
 const float KidnapRecovery::ZONE_X_MAX = 0.65f;  // |rx| 上限
-const float KidnapRecovery::ZONE_Y_MIN = -0.30f; // ry 下限（容許微負）
+const float KidnapRecovery::ZONE_Y_MIN = 0.0f;   // ry 下限（不容許球門線後方，砍掉不可能擺放位置）
 const float KidnapRecovery::ZONE_Y_MAX = 0.70f;  // ry 上限
 
 // bearing 雜訊遠小於 distance（Kose et al. 2006 實測結論）→ σ_φ < σ_r

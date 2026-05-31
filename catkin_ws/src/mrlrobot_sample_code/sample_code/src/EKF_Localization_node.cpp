@@ -114,10 +114,10 @@ int main(int argc, char** argv)
     // ★ 調教區
     const float INNOV_THRESHOLD       = 0.30f;  // innovation L2 norm > 此值視為異常
     const int   KIDNAP_COUNT          = 15;     // 條件A：連續 N 幀觸發（750ms@20Hz）
-    // 條件B sliding window：最近 60 幀中有 ≥40 幀 posts<2 就觸發
-    // （避免「偶爾一幀看到兩柱就清零」的脆弱性，60 ≈ 3s @ 20Hz）
-    const int   POSTS_LOW_WINDOW      = 60;
-    const int   POSTS_LOW_THRESH      = 40;
+    // 條件B sliding window：最近 40 幀中有 ≥20 幀 posts<2 就觸發
+    // （避免「偶爾一幀看到兩柱就清零」的脆弱性，40 ≈ 2s @ 20Hz，約 1s posts<2 即觸發）
+    const int   POSTS_LOW_WINDOW      = 40;
+    const int   POSTS_LOW_THRESH      = 20;
     const float GOODX_VAR_THRESH      = 0.05f;  // var_x 低於此值才更新 last_good_x（可信）
     const float SETTLE_DURATION       = 5.0f;   // SETTLE 落地等待（秒）
     const float INTERCEPT_P_INFLATE   = 5.0f;   // 攔截完成後 P 矩陣膨脹係數
@@ -128,7 +128,7 @@ int main(int argc, char** argv)
     // （perception 偶有單幀雜訊，連續 20 幀太脆弱，超過一半已足夠）
     const int   RETURN_WINDOW         = 20;
     const int   RETURN_THRESH         = 11;
-    const float RETURN_TIMEOUT        = 20.0f;  // RETURN 逾時未切回 → HALT（疑似收斂到錯位）
+    const float RETURN_TIMEOUT        = 10.0f;  // RETURN 逾時未切回 → HALT（疑似收斂到錯位）
 
     int       kidnap_frames     = 0;
     std::deque<bool> posts_low_window;     // 條件B sliding window
