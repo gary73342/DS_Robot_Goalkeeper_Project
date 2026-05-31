@@ -133,6 +133,7 @@ int main(int argc, char** argv)
     int       kidnap_frames     = 0;
     std::deque<bool> posts_low_window;     // 條件B sliding window
     std::deque<bool> return_succ_window;   // RETURN/HALT 切回 sliding window
+    std::deque<bool> halt_posts_window;    // HALT 單柱監控 sliding window
     float     last_good_x       = 0.0f;  // 最後一次可信的 EKF x（綁架前），決定恢復側別
     bool      last_good_x_valid = false;
     ros::Time settle_start_time;
@@ -280,6 +281,7 @@ int main(int argc, char** argv)
                 if (n_posts >= 2 && ekf.initFromPosts(latest_posts)) {
                     kr.setStage(RecoveryStage::RETURN);
                     return_succ_window.clear();
+                    halt_posts_window.clear();
                     return_start_time = ros::Time::now();
                     ROS_WARN("[KIDNAP] SPIN 看到兩柱，直接重定位 → RETURN");
                     init_ok = true;
@@ -304,6 +306,7 @@ int main(int argc, char** argv)
                             ekf = EKFLocalizer(bx, by, bt);
                             kr.setStage(RecoveryStage::RETURN);
                             return_succ_window.clear();
+                            halt_posts_window.clear();
                             return_start_time = ros::Time::now();
                             ROS_WARN("[KIDNAP] ★收斂 θ=%+.2f rx=%+.2f ry=%+.2f 存活=%d "
                                      "→ 重置EKF，進 RETURN", bt, bx, by, kr.aliveCount());
@@ -324,6 +327,7 @@ int main(int argc, char** argv)
                         ekf = EKFLocalizer(bx, by, bt);
                         kr.setStage(RecoveryStage::RETURN);
                         return_succ_window.clear();
+                        halt_posts_window.clear();
                         return_start_time = ros::Time::now();
                         ROS_WARN("[KIDNAP] 轉滿 180° 未看到兩柱 → 取中位數假設 "
                                  "θ=%+.2f rx=%+.2f ry=%+.2f 存活=%d → RETURN",
@@ -331,6 +335,7 @@ int main(int argc, char** argv)
                     } else {
                         kr.setStage(RecoveryStage::HALT);
                         return_succ_window.clear();
+                        halt_posts_window.clear();
                         ROS_WARN("[KIDNAP] 轉滿 180° 期間從未生成假設 → HALT");
                     }
                 }
@@ -352,18 +357,38 @@ int main(int argc, char** argv)
                     kidnap_frames = 0;
                     posts_low_window.clear();
                     return_succ_window.clear();
+                    halt_posts_window.clear();
                     state         = LocState::EKF_PRIMARY;
                     ROS_WARN("[KIDNAP] ★恢復完成（%d/%d in last %d）切回 EKF | X=%+.2f Y=%+.2f",
                              return_succ_count, RETURN_THRESH, RETURN_WINDOW, fx, fy);
                 }
 
-                // RETURN 超時保護：收斂到錯 pose 時會朝錯目標無限繞行 → 逾時停下
+                // RETURN 超時保護：收斂到錯 pose 時會朝錯目標無限繞行 → 逾時進 HALT
                 if (kr.getStage() == RecoveryStage::RETURN
                         && (ros::Time::now() - return_start_time).toSec() > RETURN_TIMEOUT) {
                     kr.setStage(RecoveryStage::HALT);
                     return_succ_window.clear();
-                    ROS_WARN("[KIDNAP] RETURN 超時 %.0fs 未切回 → HALT（疑似收斂到錯誤位置）",
+                    halt_posts_window.clear();
+                    ROS_WARN("[KIDNAP] RETURN 超時 %.0fs 未切回 → HALT，持續監控球柱",
                              RETURN_TIMEOUT);
+                }
+
+                // HALT 單柱監控：n_posts > 0 達 11/20 幀 → 直接跳 SPIN 重定位
+                if (kr.getStage() == RecoveryStage::HALT) {
+                    halt_posts_window.push_back(n_posts > 0);
+                    if (static_cast<int>(halt_posts_window.size()) > RETURN_WINDOW)
+                        halt_posts_window.pop_front();
+                    int halt_posts_count = std::count(halt_posts_window.begin(),
+                                                      halt_posts_window.end(), true);
+                    if (static_cast<int>(halt_posts_window.size()) >= RETURN_WINDOW
+                            && halt_posts_count >= RETURN_THRESH) {
+                        kr.reset(kr.getPostSide());
+                        kr.setStage(RecoveryStage::SPIN);
+                        halt_posts_window.clear();
+                        return_succ_window.clear();
+                        ROS_WARN("[KIDNAP] HALT 見柱（%d/%d）→ 直接跳 SPIN 重定位",
+                                 halt_posts_count, RETURN_THRESH);
+                    }
                 }
             }
         }
