@@ -579,65 +579,6 @@ class FusionNode:
             rospy.logwarn("[Fusion] 球消失超過 %.1f 秒，重置 EKF", EKF_RESET_TIMEOUT)
             self.ekf.reset()
 
-    # ------------------------------------------------------------------
-    # 攔截決策 + P-Control
-    # ------------------------------------------------------------------
-    '''
-    def _publish_control(self):
-        """
-        從 EKF 後驗狀態預測攔截點，計算 P-Control 速度，發布 /cmd_vel。
-        """
-        state = self.ekf.get_state()
-        bx, by, vx, vy = state
-
-        cmd = Twist()
-
-        ball_speed = math.hypot(vx, vy)
-
-        # 球速太小（靜止或微動）→ 直接追當前 X，不做預測
-        # 避免光達雜訊造成的微小速度被 t_intercept 放大
-        if ball_speed < 0.05 or vy >= BALL_INCOMING_VY:
-            target_x = bx
-            mode_str = "TRACK"
-        else:
-            # 球正在靠近，預測攔截點
-            if abs(vy) < 1e-3:
-                t_intercept = 0.0
-            else:
-                t_intercept = (DEFENSE_LINE_Y - by) / vy
-
-            t_intercept = max(t_intercept, 0.0)
-            t_intercept = min(t_intercept, 2.0)
-            # 攔截點 X + 延遲補償
-            target_x = bx + vx * (t_intercept + SYSTEM_DELAY)
-            mode_str = "INTERCEPT"
-
-        # 限制攔截點在球場範圍內
-        target_x = np.clip(target_x, FIELD_X_MIN, FIELD_X_MAX)
-
-        # P-Control
-        error = target_x - self.robot_x
-
-        if abs(error) < STOP_THRESHOLD:
-            speed = 0.0
-        else:
-            speed = KP_LINEAR * error
-            # 最小速度補償
-            if abs(speed) < MIN_SPEED:
-                speed = math.copysign(MIN_SPEED, speed)
-            speed = np.clip(speed, -MAX_SPEED, MAX_SPEED)
-
-        cmd.linear.x  = -speed   # 負號：正 cmd_vel = 機器人往 -X，需反向
-        cmd.angular.z = 0.0
-        self.pub_vel.publish(cmd)
-
-        # 終端機輸出（方便 debug，不需要 rostopic echo）
-        rospy.loginfo_throttle(0.2,
-            "[Fusion] %s | 球(%.2f,%.2f) v=(%.2f,%.2f) | "
-            "目標X=%.2f 機器人X=%.2f | 速度=%+.2f",
-            mode_str, bx, by, vx, vy,
-            target_x, self.robot_x, speed)
-    '''
     def _publish_predict_marker(self, x, y, mode):
         """在 RViz 中畫出落點（INTERCEPT=紅橙，TRACK=藍灰）"""
         marker = Marker()
