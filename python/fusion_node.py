@@ -56,7 +56,7 @@ Q_VXY = 0.5   # 速度的過程雜訊（調大：縮短平滑窗，讓速度估�
 # 相機基礎量測雜訊（R_base）：數字越大代表越不信任相機
 R_BASE_CAM   = 0.01  # 相機很穩，給小雜訊讓 EKF 主要信任相機
 # 光達基礎量測雜訊
-R_BASE_LIDAR = 0.20  # 光達跳動大，給大雜訊降低其影響
+R_BASE_LIDAR = 0.04  # 光達在 1.5m 內可信，降低雜訊以增加貢獻
 # 光達遠距離懲罰（超過 1.5m 後每增加 1m 增加多少雜訊）
 R_LIDAR_ALPHA = 0.5
 
@@ -240,21 +240,13 @@ class AsyncEKF:
 # 動態 R 矩陣計算
 # ==============================================================================
 
-def compute_R_camera(ball_world_x, ball_world_y, robot_x, robot_y, conf):
+def compute_R_camera(conf):
     """
     相機的動態量測雜訊矩陣。
-    - 球離相機越遠（深度越大），雜訊越大
-    - YOLO conf 越低，雜訊越大
-    球到相機的距離用球到機器人的距離近似（相機架在球場邊，跟機器人距離固定）
+    場地簡單、遠距離信心依然高，移除距離懲罰，只由 conf 縮放。
     """
-    d = math.hypot(ball_world_x - robot_x, ball_world_y - robot_y)
-    # d = ball_world_y
-    d_ref = 1.5   # 參考距離（公尺）
-    conf = max(conf, 0.01)   # 防止除以零
-
-    scale = (d / d_ref) ** 2 / conf
-    r_val = R_BASE_CAM * scale
-    r_val = np.clip(r_val, R_BASE_CAM, R_BASE_CAM * 50)
+    r_val = R_BASE_CAM / max(conf, 0.01)
+    r_val = np.clip(r_val, R_BASE_CAM * 0.5, R_BASE_CAM * 3)
     return np.eye(2) * r_val
 
 def compute_R_lidar(ball_world_x, ball_world_y, robot_x, robot_y):
@@ -484,8 +476,7 @@ class FusionNode:
             self._check_lost()
             return
 
-        R = compute_R_camera(X_cam, Y_cam,
-                              self.robot_x, self.robot_y, conf)
+        R = compute_R_camera(conf)
         accepted = self.ekf.correction([X_cam, Y_cam], R)
 
         if accepted:

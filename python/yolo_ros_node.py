@@ -22,6 +22,7 @@ import socket
 import json
 import os
 import sys
+import time
 import numpy as np
 import cv2
 from log import setup_log
@@ -417,7 +418,9 @@ class YoloRosNode:
         frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
 
         # --- YOLO 推論 ---
+        _t0 = time.time()
         r = self._call_yolo(frame)
+        rospy.loginfo_throttle(1.0, "[YOLO] 推論耗時 %.1fms", (time.time() - _t0) * 1000)
 
         result_msg = Float32MultiArray()
         vis_frame = frame.copy()
