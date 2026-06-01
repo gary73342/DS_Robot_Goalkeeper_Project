@@ -26,9 +26,13 @@ __pycache__/
 *.pyo
 
 python/H.npy
+python/log.py
 
 # MATLAB/Octave
 *.asv
+
+# 專案規則檔（本機保留，不進版控）
+CLAUDE.md
 
 # 系統檔案
 .DS_Store
@@ -39,7 +43,3 @@ Thumbs.db
 
 # tmux控制檔案
 *.sh
-
-TODO.txt
-
-
