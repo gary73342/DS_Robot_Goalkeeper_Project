@@ -44,6 +44,7 @@ BALL_FIELD_X_MIN = -1.0   # 場地左邊界（公尺）
 BALL_FIELD_X_MAX = +1.0   # 場地右邊界（公尺）
 BALL_FIELD_Y_MAX =  2.88  # 場地遠端邊界（公尺）：與相機標定遠端 (±0.45, 2.88) 一致
 BALL_FIELD_Y_MIN =  0.5   # 防守線後方邊界：球低於此值（已越過防守線、在機器人身後）一律忽略
+REACT_Y_MAX      =  3.1   # 遠端緩衝帶上限（公尺）：球在 BALL_FIELD_Y_MAX~REACT_Y_MAX 且 vy<0 時提前攔截
 
 # --- 相機信心門檻 ---
 CONF_MIN_CAM = 0.70   # 低於此值的偵測直接忽略，不進入 EKF
@@ -98,7 +99,6 @@ LOCALIZED_VAR_THRESHOLD = 0.02   # 對應標準差約 0.14m
 KIDNAP_SPIN_SPEED   = 0.4    # SPIN 慢速原地旋轉角速度（rad/s）
 KIDNAP_RETURN_SPEED = 0.15   # RETURN 弧線前進速度（m/s，cmd.linear.x 正值 = 沿車頭前進）
 RETURN_GOAL_X       = 0.0    # RETURN 導航目標 X（場地中心，保證走到看得到兩柱）
-RETURN_GOAL_Y       = DEFENSE_LINE_Y  # 目標 Y（不強制精確，巡邏線附近即可）
 RETURN_GOAL_REACHED = 0.10   # 距目標小於此值不再前進（m）
 RETURN_THETA_ALIGN  = 0.3    # |θ 誤差| > 此值時只旋轉不平移（rad，約 17°）
 
@@ -121,12 +121,6 @@ INTERCEPT_CONFIRM_TIME  = 0.5   # 條件需持續多久才確認攔截完成（�
 # --- 落點預測觸發條件 ---
 BALL_INCOMING_SPEED = 0.4   # 全向球速達此值才啟動落點預測（m/s）
 INTERCEPT_T_MAX     = 5.0   # 預測時間上限（秒），防止球速極慢時落點飛太遠
-
-# 系統延遲補償（從發出指令到馬達開始動的延遲，單位秒）
-# SYSTEM_DELAY    = 0.08
-# --- 來球判斷 ---
-# 球的 Y 方向速度小於此值（負數，朝機器人）才觸發攔截
-# BALL_INCOMING_VY = -0.1  # m/s
 
 # ==============================================================================
 # 工具函式
@@ -280,8 +274,10 @@ class FusionNode:
         self.has_pose    = False
 
         # LOST 狀態計時
-        self.last_valid_obs_time = None
+        self.last_valid_obs_time = None  # 上次球在場內的時間（控制 LOST/PATROL）
+        self.last_any_obs_time   = None  # 上次任何感測器偵測到球的時間（控制 EKF reset）
         self.is_lost = True
+        self.side_ball_active = False    # 偵測到場外側邊球，守門員移至中間待機
 
         # 定位收斂狀態
         self.is_localized = False
@@ -480,18 +476,30 @@ class FusionNode:
         accepted = self.ekf.correction([X_cam, Y_cam], R)
 
         if accepted:
+            self.last_any_obs_time = rospy.Time.now().to_sec()
             if _in_field(X_cam, Y_cam):
                 self.last_valid_obs_time = rospy.Time.now().to_sec()
                 self.is_lost = False
                 self._publish_control()
             else:
+                if Y_cam < BALL_FIELD_Y_MAX:
+                    self.side_ball_active = True
                 if not self.is_lost:
-                    rospy.logwarn("[Fusion] 球在場外 (%.2f, %.2f)，立即切換至巡邏", X_cam, Y_cam)
+                    rospy.logwarn("[Fusion] 相機：球在場外 (%.2f, %.2f)，切換至巡邏，EKF 持續追蹤",
+                                  X_cam, Y_cam)
                     self.is_lost = True
                     self._stop_robot()
                 else:
+                    state = self.ekf.get_state()
                     rospy.logwarn_throttle(1.0,
-                        "[Fusion] 球在場外 (%.2f, %.2f)，維持巡邏", X_cam, Y_cam)
+                        "[Fusion] 相機：球在場外 (%.2f, %.2f)，EKF 追蹤中 vx=%+.2f vy=%+.2f",
+                        X_cam, Y_cam, state[2], state[3])
+                # 遠端緩衝帶（BALL_FIELD_Y_MAX~REACT_Y_MAX）且球往來：提前啟動攔截
+                if (self.ekf.get_state()[3] < 0
+                        and BALL_FIELD_Y_MAX <= Y_cam <= REACT_Y_MAX):
+                    self.last_valid_obs_time = rospy.Time.now().to_sec()
+                    self.is_lost = False
+                    self._publish_control()
                 self._check_lost()
 
     # ------------------------------------------------------------------
@@ -519,16 +527,30 @@ class FusionNode:
         accepted = self.ekf.correction([X_lidar, Y_lidar], R)
 
         if accepted:
+            self.last_any_obs_time = rospy.Time.now().to_sec()
             if _in_field(X_lidar, Y_lidar):
                 self.last_valid_obs_time = rospy.Time.now().to_sec()
                 self.is_lost = False
                 self._publish_control()
             else:
+                if Y_lidar < BALL_FIELD_Y_MAX:
+                    self.side_ball_active = True
                 if not self.is_lost:
-                    rospy.logwarn("[Fusion] 光達：球在場外 (%.2f, %.2f)，立即切換至巡邏",
+                    rospy.logwarn("[Fusion] 光達：球在場外 (%.2f, %.2f)，切換至巡邏，EKF 持續追蹤",
                                   X_lidar, Y_lidar)
                     self.is_lost = True
                     self._stop_robot()
+                else:
+                    state = self.ekf.get_state()
+                    rospy.logwarn_throttle(1.0,
+                        "[Fusion] 光達：球在場外 (%.2f, %.2f)，EKF 追蹤中 vx=%+.2f vy=%+.2f",
+                        X_lidar, Y_lidar, state[2], state[3])
+                # 遠端緩衝帶（BALL_FIELD_Y_MAX~REACT_Y_MAX）且球往來：提前啟動攔截
+                if (self.ekf.get_state()[3] < 0
+                        and BALL_FIELD_Y_MAX <= Y_lidar <= REACT_Y_MAX):
+                    self.last_valid_obs_time = rospy.Time.now().to_sec()
+                    self.is_lost = False
+                    self._publish_control()
                 self._check_lost()
 
     # ------------------------------------------------------------------
@@ -561,23 +583,31 @@ class FusionNode:
     # ------------------------------------------------------------------
 
     def _check_lost(self):
-        if self.last_valid_obs_time is None:
-            return
-        elapsed = rospy.Time.now().to_sec() - self.last_valid_obs_time
+        now = rospy.Time.now().to_sec()
 
-        if elapsed > LOST_TIMEOUT and not self.is_lost:
-            if self.is_intercepted:
-                rospy.logwarn("[Fusion] ★ 攔截後球消失（被拿走），發送 interception_done 信號")
-                self.pub_interception_done.publish(Bool(data=True))
-                self.is_intercepted = False
-                self.intercept_condition_start = None
-            rospy.logwarn("[Fusion] 球消失超過 %.1f 秒，進入 LOST 模式（EKF 繼續預測）", LOST_TIMEOUT)
-            self.is_lost = True
-            self._stop_robot()
+        # ── 機器人行為：距上次「場內有效觀測」多久 ──────────────────────────
+        if self.last_valid_obs_time is not None:
+            elapsed_valid = now - self.last_valid_obs_time
+            if elapsed_valid > LOST_TIMEOUT and not self.is_lost:
+                if self.is_intercepted:
+                    rospy.logwarn("[Fusion] ★ 攔截後球消失（被拿走），發送 interception_done 信號")
+                    self.pub_interception_done.publish(Bool(data=True))
+                    self.is_intercepted = False
+                    self.intercept_condition_start = None
+                rospy.logwarn("[Fusion] 場內球消失超過 %.1f 秒，進入 LOST 模式（EKF 繼續預測）",
+                              LOST_TIMEOUT)
+                self.is_lost = True
+                self._stop_robot()
 
-        if elapsed > EKF_RESET_TIMEOUT and self.ekf.initialized:
-            rospy.logwarn("[Fusion] 球消失超過 %.1f 秒，重置 EKF", EKF_RESET_TIMEOUT)
-            self.ekf.reset()
+        # ── EKF reset：距上次「任何位置偵測到球」多久（真的不見才 reset）──
+        last_any = self.last_any_obs_time if self.last_any_obs_time is not None \
+                   else self.last_valid_obs_time
+        if last_any is not None:
+            elapsed_any = now - last_any
+            if elapsed_any > EKF_RESET_TIMEOUT and self.ekf.initialized:
+                rospy.logwarn("[Fusion] 球超過 %.1f 秒完全未偵測，重置 EKF", EKF_RESET_TIMEOUT)
+                self.ekf.reset()
+                self.side_ball_active = False
 
     def _publish_predict_marker(self, x, y, mode):
         """在 RViz 中畫出落點（INTERCEPT=紅橙，TRACK=藍灰）"""
@@ -784,6 +814,25 @@ class FusionNode:
             return
 
         if not self.is_lost:
+            return
+
+        # 側邊球待機：偵測到場外球時移至中間，準備應對球進場
+        if self.side_ball_active and self.is_localized and self.has_pose:
+            error = 0.0 - self.robot_x
+            if abs(error) < STOP_THRESHOLD:
+                speed = 0.0
+            else:
+                speed = KP_LINEAR * error
+                speed = np.clip(speed, -PATROL_MAX_SPEED, PATROL_MAX_SPEED)
+                if abs(speed) < MIN_SPEED:
+                    speed = math.copysign(MIN_SPEED, speed)
+            speed = self._apply_ramp(speed)
+            cmd = Twist()
+            cmd.linear.x = -speed
+            cmd.angular.z = self._theta_correction()
+            self.pub_vel.publish(cmd)
+            rospy.loginfo_throttle(0.5,
+                "[Fusion] SIDE | 機X=%+.2f 目標X=+0.00 誤差=%+.2f", self.robot_x, error)
             return
 
         if self.is_localized:
