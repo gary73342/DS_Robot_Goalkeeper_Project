@@ -501,6 +501,8 @@ class FusionNode:
                     self.is_lost = False
                     self._publish_control()
                 self._check_lost()
+        else:
+            self._check_lost()
 
     # ------------------------------------------------------------------
     # 光達 callback（~10Hz）
@@ -552,6 +554,8 @@ class FusionNode:
                     self.is_lost = False
                     self._publish_control()
                 self._check_lost()
+        else:
+            self._check_lost()
 
     # ------------------------------------------------------------------
     # 速度 Ramp：限制每次發布的速度變化率，避免急停急衝
