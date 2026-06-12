@@ -77,6 +77,9 @@ private:
     Eigen::Matrix<float, 2, 3> observationJacobian(const Observation& land) const;
 
     static float normalizeAngle(float angle);
+
+    // LiDAR 感測器在機器人中心的偏移量（沿 body +X，即全域後方 8cm）
+    static constexpr float LIDAR_OFFSET = 0.08f;
 };
 
 #endif // EKF_LOCALIZATION_H

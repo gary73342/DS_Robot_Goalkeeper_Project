@@ -241,13 +241,16 @@ void EKFLocalizer::updateOneLandmark(const Observation& obs, const Observation& 
 
 Vector2f EKFLocalizer::predictObservation(const Observation& land) const
 {
-    float dx = land.x - mu_(0);
-    float dy = land.y - mu_(1);
     float th = mu_(2);
+    // 觀測原點為感測器位置（機器人中心往 body+X 偏移 LIDAR_OFFSET）
+    float sensor_x = mu_(0) + LIDAR_OFFSET * std::cos(th);
+    float sensor_y = mu_(1) + LIDAR_OFFSET * std::sin(th);
+    float dx = land.x - sensor_x;
+    float dy = land.y - sensor_y;
 
     Vector2f z_hat;
-    z_hat(0) =  dx * std::cos(th) + dy * std::sin(th); // 局部 x（前方）
-    z_hat(1) = -dx * std::sin(th) + dy * std::cos(th); // 局部 y（左方）
+    z_hat(0) =  dx * std::cos(th) + dy * std::sin(th); // 局部 x
+    z_hat(1) = -dx * std::sin(th) + dy * std::cos(th); // 局部 y
     return z_hat;
 }
 
@@ -257,11 +260,14 @@ Vector2f EKFLocalizer::predictObservation(const Observation& land) const
 
 Matrix<float, 2, 3> EKFLocalizer::observationJacobian(const Observation& land) const
 {
-    float dx = land.x - mu_(0);
-    float dy = land.y - mu_(1);
     float th = mu_(2);
     float cosT = std::cos(th);
     float sinT = std::sin(th);
+    // 觀測原點為感測器位置（與 predictObservation 保持一致）
+    float sensor_x = mu_(0) + LIDAR_OFFSET * cosT;
+    float sensor_y = mu_(1) + LIDAR_OFFSET * sinT;
+    float dx = land.x - sensor_x;
+    float dy = land.y - sensor_y;
 
     Matrix<float, 2, 3> H;
     // ∂h/∂x  ∂h/∂y  ∂h/∂θ
@@ -271,7 +277,7 @@ Matrix<float, 2, 3> EKFLocalizer::observationJacobian(const Observation& land) c
 
     H(1, 0) =  sinT;
     H(1, 1) = -cosT;
-    H(1, 2) = -dx * cosT - dy * sinT;
+    H(1, 2) = -LIDAR_OFFSET - dx * cosT - dy * sinT;
 
     return H;
 }

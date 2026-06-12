@@ -426,10 +426,13 @@ int main(int argc, char** argv)
         {
             std_msgs::Float32MultiArray ball_msg;
             if (ball_local_detected) {
-                float ball_global_x = ex + ball_local_x * cosf(et)
-                                         - ball_local_y * sinf(et);
-                float ball_global_y = ey + ball_local_x * sinf(et)
-                                         + ball_local_y * cosf(et);
+                // 轉換原點為感測器位置（機器人中心往 body+X 偏移 8cm）
+                float sensor_x = ex + 0.08f * cosf(et);
+                float sensor_y = ey + 0.08f * sinf(et);
+                float ball_global_x = sensor_x + ball_local_x * cosf(et)
+                                               - ball_local_y * sinf(et);
+                float ball_global_y = sensor_y + ball_local_x * sinf(et)
+                                               + ball_local_y * cosf(et);
                 ball_msg.data = {1.0f, ball_global_x, ball_global_y};
             } else {
                 ball_msg.data = {0.0f, 0.0f, 0.0f};
@@ -442,8 +445,10 @@ int main(int argc, char** argv)
         // ------------------------------------------------------------------
         if (state == LocState::EKF_PRIMARY) {
             if (ball_local_detected) {
-                float bgx = ex + ball_local_x * cosf(et) - ball_local_y * sinf(et);
-                float bgy = ey + ball_local_x * sinf(et) + ball_local_y * cosf(et);
+                float sx  = ex + 0.08f * cosf(et);
+                float sy  = ey + 0.08f * sinf(et);
+                float bgx = sx + ball_local_x * cosf(et) - ball_local_y * sinf(et);
+                float bgy = sy + ball_local_x * sinf(et) + ball_local_y * cosf(et);
                 ROS_INFO_THROTTLE(0.5,
                     "[EKF] X=%+.2f Y=%.2f θ=%+.3f var=%.4f posts=%zu | 球(%+.2f,%.2f)",
                     ex, ey, et, var_x, latest_posts.size(), bgx, bgy);
