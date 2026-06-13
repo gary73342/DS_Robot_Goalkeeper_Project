@@ -4,17 +4,6 @@
 
 ---
 
-## 相關連結
-
-| 資源 | 連結 |
-|------|------|
-| Demo 影片 | [Watch Demo](YOUR_VIDEO_URL_HERE) |
-| ROS環境搭建 | [HackMD](https://hackmd.io/@Gary73342/B1ghqouCWe) |
-| 相機設定與用 | [HackMD](https://hackmd.io/@Gary73342/rknFdwDJfg) |
-| 相機資料處理 | [HackMD](https://hackmd.io/@Gary73342/BJbxLOokfe) |
-
----
-
 ## 專案簡介
 
 本專案實作一套自主機器人守門員系統，部署於差動驅動式 minibot 平台，搭載 2D LiDAR 與 Intel RealSense D435i RGB-D 相機，在 ROS 1 環境下即時運作。系統整合感知、定位、決策三層架構，無需人工介入即可自動攔截來球，在 30 次實體測試中達到 **87% 整體攔截成功率**。
@@ -93,4 +82,15 @@ matlab/           # LiDAR 資料分析與隨機森林訓練
 runs/             # YOLOv8 訓練模型權重
 ```
 
+---
 
+## 相關連結
+
+| 資源 | 連結 |
+|------|------|
+| Demo 影片 | [Watch Demo](YOUR_VIDEO_URL_HERE) |
+| ROS環境搭建 | [HackMD](https://hackmd.io/@Gary73342/B1ghqouCWe) |
+| 相機設定與用 | [HackMD](https://hackmd.io/@Gary73342/rknFdwDJfg) |
+| 相機資料處理 | [HackMD](https://hackmd.io/@Gary73342/BJbxLOokfe) |
+
+---
